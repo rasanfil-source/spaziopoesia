@@ -639,7 +639,7 @@ class EmailProcessor {
       // ====================================================================================================
       // VERIFICA TERRITORIO RIMOSSA
       // ====================================================================================================
-      const territoryContext = null;
+
 
       // ====================================================================================================
       // STEP 7.2: PROMPT CONTEXT (profilo e concern dinamici)
@@ -743,7 +743,7 @@ class EmailProcessor {
         responseDelay: responseDelay,
         promptProfile: promptProfile,
         activeConcerns: activeConcerns,
-        territoryContext: territoryContext, // Passiamo il contesto separatamente per rendering prioritario
+
         requestType: requestType, // Aggiunto per recupero selettivo Dottrina
         attachmentsContext: textFromAttachments
       };

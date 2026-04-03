@@ -158,12 +158,12 @@ const CONFIG = {
 // ====================================================================
 
 const LANGUAGE_MARKERS = {
-  'it': ['grazie', 'cordiali', 'saluti', 'gentile', 'parrocchia', 'messa', 'vorrei', 'quando', 'buongiorno', 'buonasera'],
-  'en': ['thank', 'regards', 'dear', 'parish', 'mass', 'church', 'would', 'could', 'please', 'sincerely'],
-  'es': ['gracias', 'saludos', 'estimado', 'parroquia', 'misa', 'iglesia', 'querría', 'buenos', 'días'],
-  'pt': ['obrigado', 'obrigada', 'atenciosamente', 'prezado', 'paróquia', 'missa', 'gostaria', 'bom', 'dia', 'tarde'],
-  'fr': ['merci', 'cordialement', 'cher', 'paroisse', 'messe', 'église', 'voudrais', 'pourrais', 'bonjour', 'bonsoir'],
-  'de': ['danke', 'grüße', 'liebe', 'pfarrei', 'messe', 'kirche', 'möchte', 'könnte', 'bitte', 'guten']
+  'it': ['grazie', 'cordiali', 'saluti', 'gentile', 'poesia', 'concorso', 'testo', 'versi', 'buongiorno', 'buonasera'],
+  'en': ['thank', 'regards', 'dear', 'poetry', 'contest', 'verses', 'poem', 'could', 'please', 'sincerely'],
+  'es': ['gracias', 'saludos', 'estimado', 'poesía', 'concurso', 'versos', 'poema', 'buenos', 'días'],
+  'pt': ['obrigado', 'obrigada', 'atenciosamente', 'prezado', 'poesia', 'concurso', 'versos', 'bom', 'dia', 'tarde'],
+  'fr': ['merci', 'cordialement', 'cher', 'poésie', 'concours', 'vers', 'poème', 'bonjour', 'bonsoir'],
+  'de': ['danke', 'grüße', 'liebe', 'poesie', 'wettbewerb', 'verse', 'gedicht', 'guten', 'tag']
 };
 
 // ====================================================================

@@ -444,7 +444,7 @@ class ResponseValidator {
     const hasValidSignature = this.signaturePatterns.some(pattern => pattern.test(response));
 
     if (!hasValidSignature) {
-      warnings.push("Firma mancante (es. 'Segreteria Parrocchia Sant'Eugenio')");
+      warnings.push("Firma mancante (es. 'Il comitato Uno spazio per la poesia')");
       score = 0.95;
     }
 

@@ -111,7 +111,6 @@ class PromptEngine {
       activeConcerns = {},
       salutationMode = 'full',
       responseDelay = null,
-      territoryContext = null,
       attachmentsContext = ''
     } = options;
 
@@ -293,7 +292,7 @@ class PromptEngine {
 
     addSection(this._renderCriticalErrorsReminder(), 'CriticalErrorsReminder');
     // Nota: il parametro è volutamente territoryContext (senza refusi) perché viene passato dal chiamante con lo stesso nome.
-    addSection(this._renderContextualChecklist(detectedLanguage, territoryContext, salutationMode), 'ContextualChecklist');
+    addSection(this._renderContextualChecklist(detectedLanguage, salutationMode), 'ContextualChecklist');
 
     addSection('**Genera la risposta completa seguendo le linee guida sopra:**', 'FinalInstruction', { force: true });
 
@@ -339,7 +338,7 @@ class PromptEngine {
   // ========================================================================
   // Sostituisce checklist generica con versione mirata per lingua/contesto
 
-  _renderContextualChecklist(detectedLanguage, territoryContext, salutationMode) {
+  _renderContextualChecklist(detectedLanguage, salutationMode) {
     const checks = [];
 
     // Controlli universali
@@ -358,11 +357,7 @@ class PromptEngine {
       checks.push('□ TODA la respuesta en ESPAÑOL (NO palabras italianas)');
     }
 
-    // Controlli territorio (se rilevante)
-    if (territoryContext && String(territoryContext).includes('RIENTRA')) {
-      checks.push('□ Ho dato risposta SÌ/NO sul territorio (NON "verificheremo")');
-      checks.push('□ Ho usato ESATTAMENTE i dati della verifica territorio');
-    }
+
 
     // Controlli saluto
     if (salutationMode === 'none_or_continuity' || salutationMode === 'session') {
@@ -431,7 +426,7 @@ un sincero apprezzamento da parte della nostra segreteria.
 
 📖 MANDATO:
 Il tuo compito è organizzare e valorizzare le poesie ricevute per la pubblicazione settimanale.
-NOTA BENE: La pubblicazione avviene alle porte di ingresso della Basilica e sulla pagina web dedicata: bit.ly/spaziopoesia (NON sul bollettino parrocchiale).
+NOTA BENE: La pubblicazione avviene alle porte di ingresso della Basilica e sulla pagina web dedicata: bit.ly/spaziopoesia.
 Rispondi alle email in modo cortese, con un linguaggio erudito e letterario, ma chiaro.
 Individua nel testo ricevuto o negli allegati gli elementi positivi e inserisci nella risposta un apprezzamento specifico per essi. 
 Quando vengono inviati testi poetici, esamina il contenuto e fanne un'analisi letteraria sentita e partecipe.
