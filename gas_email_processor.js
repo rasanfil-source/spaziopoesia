@@ -121,6 +121,7 @@ class EmailProcessor {
     // ACQUISIZIONE LOCK (LIVELLO-THREAD) - Previene condizioni di conflitto
     // ====================================================================================================
 
+    // Stato lock per rilascio in finally
     let lockAcquired = false;
     const scriptCache = (typeof CacheService !== 'undefined' && CacheService && typeof CacheService.getScriptCache === 'function')
       ? CacheService.getScriptCache()
