@@ -1039,10 +1039,10 @@ Il comitato "Uno spazio per la poesia"
     const catLower = (category || '').toString().toLowerCase();
     const isPoetryCategory = catLower.includes('poem') || catLower.includes('poetr');
     
-    // Heuristic per rilevare poesie nel corpo (anche brevi)
+    // Heuristic per rilevare poesie nel corpo (anche molto brevi)
     const hasBodyPoem = emailContent && (
-      (emailContent.length > 150 && /poesia|componimento|versi|lirica|sonetto|ode/i.test(emailContent)) ||
-      (emailContent.split('\n').filter(l => l.trim().length > 0).length > 4) // Più di 4 righe non vuote spesso indica poesia
+      (emailContent.length > 50 && /poesia|componimento|versi|lirica|sonetto|ode|testo/i.test(emailContent)) ||
+      (emailContent.split('\n').filter(l => l.trim().length > 0).length >= 3) // Almeno 3 righe non vuote indica già struttura poetica
     );
     const hasPoem = hasAttachmentsPoem || hasBodyPoem || isPoetryCategory;
     
@@ -1151,11 +1151,10 @@ Il comitato "Uno spazio per la poesia"
    • NÃO são permitidas palavras italianas (exceto a firma do comitê e possivelmente despedida)
    • Usa português para tudo: saudação, corpo, despedida`;
 
-    } else {
-      // ITALIANO (Default)
       const hasContributed = hasPoem || hadPreviousPoetry;
       
       const infoLink = "Le ricordiamo che le poesie selezionate vengono pubblicate settimanalmente alle porte di ingresso della Basilica e sulla pagina web dedicata: bit.ly/spaziopoesia.";
+      // Se abbiamo appena ricevuto una poesia, usiamo "ancora altri" per evitare l'effetto ridicolo segnalato dall'utente
       const waitingTerm = hasContributed ? "ancora altri Suoi versi" : "i Suoi versi";
       const closingPhrase = `In attesa di poter apprezzare ${waitingTerm}, Le auguriamo una buona giornata.`;
 
