@@ -1,0 +1,5 @@
+.git/
+.gitignore
+.clasp.json
+node_modules/
+CODICE.txt
