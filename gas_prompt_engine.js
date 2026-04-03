@@ -280,7 +280,7 @@ class PromptEngine {
     addTemplate('ExamplesTemplate', this._renderExamples(category), 'Examples');
 
     // 17. REGOLE FINALI
-    addSection(this._renderResponseGuidelines(detectedLanguage, currentSeason, salutation, closing, category, emailContent, workingAttachmentsContext), 'ResponseGuidelines');
+    addSection(this._renderResponseGuidelines(detectedLanguage, currentSeason, salutation, closing, category, emailContent, workingAttachmentsContext, memoryContext), 'ResponseGuidelines');
 
     if (category !== 'formal') {
       addTemplate('SpecialCasesTemplate', this._renderSpecialCases(), 'SpecialCases');
@@ -425,8 +425,8 @@ un sincero apprezzamento da parte della nostra segreteria.
     return `Sei la segreteria dell'iniziativa: 'Uno spazio per la poesia' della Parrocchia di Sant'Eugenio a Roma.
 
 📖 MANDATO:
-Il tuo compito è organizzare e valorizzare le poesie ricevute per la pubblicazione settimanale.
-NOTA BENE: La pubblicazione avviene alle porte di ingresso della Basilica e sulla pagina web dedicata: bit.ly/spaziopoesia.
+Il tuo compito è organizzare e valorizzare le poesie ricevute per la pubblicazione settimanale. 
+(Nota: le specifiche sulla sede di pubblicazione e i link web sono gestiti automaticamente nella chiusura della risposta).
 Rispondi alle email in modo cortese, con un linguaggio erudito e letterario, ma chiaro.
 Individua nel testo ricevuto o negli allegati gli elementi positivi e inserisci nella risposta un apprezzamento specifico per essi. 
 Quando vengono inviati testi poetici, esamina il contenuto e fanne un'analisi letteraria sentita e partecipe.
@@ -1033,15 +1033,22 @@ Il comitato "Uno spazio per la poesia"
   // TEMPLATE 22: LINEE GUIDA RISPOSTA
   // ========================================================================
 
-  _renderResponseGuidelines(lang, season, salutation, closing, category, emailContent, attachmentsContext) {
-    // Determina se c'è un contributo effettivo (poesia in allegato o corpo con indicatori forti)
-    // Heuristic migliorata: cerca pattern poetici tipici (a capi frequenti, rime, parole chiave specifiche)
+  _renderResponseGuidelines(lang, season, salutation, closing, category, emailContent, attachmentsContext, memoryContext) {
+    // Determina se c'è un contributo effettivo (poesia in allegato o corpo con indicatori forti o categoria rilevata)
     const hasAttachmentsPoem = attachmentsContext && attachmentsContext.trim().length > 10;
+    const catLower = (category || '').toString().toLowerCase();
+    const isPoetryCategory = catLower.includes('poem') || catLower.includes('poetr');
+    
+    // Heuristic per rilevare poesie nel corpo (anche brevi)
     const hasBodyPoem = emailContent && (
-      (emailContent.length > 250 && /poesia|componimento|versi|lirica|sonetto|ode/i.test(emailContent)) ||
-      (emailContent.split('\n').filter(l => l.trim().length > 0).length > 6 && /rima|strof|ritmo/i.test(emailContent))
+      (emailContent.length > 150 && /poesia|componimento|versi|lirica|sonetto|ode/i.test(emailContent)) ||
+      (emailContent.split('\n').filter(l => l.trim().length > 0).length > 4) // Più di 4 righe non vuote spesso indica poesia
     );
-    const hasPoem = hasAttachmentsPoem || hasBodyPoem;
+    const hasPoem = hasAttachmentsPoem || hasBodyPoem || isPoetryCategory;
+    
+    // Controlla memoria storica (in memoryContext o topic collezionati)
+    const prevCat = (memoryContext && memoryContext.category) ? memoryContext.category.toString().toLowerCase() : '';
+    const hadPreviousPoetry = prevCat.includes('poetr') || prevCat.includes('poem');
 
     let closingStatement;
     let formatSection;
@@ -1052,9 +1059,12 @@ Il comitato "Uno spazio per la poesia"
       if (category === 'parish_info_request') {
         closingStatement = "We remain available for any information or assistance regarding this initiative.";
       } else if (hasPoem) {
-        closingStatement = "We thank you for your appreciated contribution.";
+        const infoLink = "Please note that selected poems are published weekly at the entrance doors of the Basilica and on the dedicated web page: bit.ly/spaziopoesia.";
+        const closingPhrase = "Looking forward to appreciating more of your verses, we wish you a good day.";
+        closingStatement = `${infoLink}\n\n${closingPhrase}`;
       } else {
-        closingStatement = "Looking forward to appreciating your verses, we wish you a good day.";
+        const waitingText = hadPreviousPoetry ? "Looking forward to appreciating more of your verses" : "Looking forward to appreciating your verses";
+        closingStatement = `${waitingText}, we wish you a good day.`;
       }
 
       formatSection = `1. **MANDATORY GREETING:**
@@ -1081,9 +1091,12 @@ Il comitato "Uno spazio per la poesia"
       if (category === 'parish_info_request') {
         closingStatement = "Quedamos a su disposición para cualquier información o ayuda relativa a la presente iniciativa.";
       } else if (hasPoem) {
-        closingStatement = "Le agradecemos su apreciada contribución.";
+        const infoLink = "Le recordamos que las poesías seleccionadas se publican semanalmente en las puertas de entrada de la Basílica y en la página web dedicada: bit.ly/spaziopoesia.";
+        const closingPhrase = "A la espera de poder apreciar aún más sus versos, le deseamos un buen día.";
+        closingStatement = `${infoLink}\n\n${closingPhrase}`;
       } else {
-        closingStatement = "A la espera de poder apreciar sus versos, le deseamos un buen día.";
+        const waitingText = hadPreviousPoetry ? "A la espera de poder apreciar aún más sus versos" : "A la espera de poder apreciar sus versos";
+        closingStatement = `${waitingText}, le deseamos un buen día.`;
       }
 
       formatSection = `1. **SALUDO OBLIGATORIO:**
@@ -1110,9 +1123,12 @@ Il comitato "Uno spazio per la poesia"
       if (category === 'parish_info_request') {
         closingStatement = "Estamos à disposição para qualquer informação ou ajuda relativa à presente iniciativa.";
       } else if (hasPoem) {
-        closingStatement = "Agradecemos a sua apreciada contribuição.";
+        const infoLink = "Lembramos que as poesias selecionadas são publicadas semanalmente nas portas de entrada da Basílica e na página web dedicada: bit.ly/spaziopoesia.";
+        const closingPhrase = "Na expectativa de podermos apreciar ainda mais os seus versos, desejamos-lhe um bom dia.";
+        closingStatement = `${infoLink}\n\n${closingPhrase}`;
       } else {
-        closingStatement = "Na expectativa de podermos apreciar os seus versos, desejamos-lhe um bom dia.";
+        const waitingText = hadPreviousPoetry ? "Na expectativa de podermos apreciar ainda mais os seus versos" : "Na expectativa de podermos apreciar os seus versos";
+        closingStatement = `${waitingText}, desejamos-lhe um bom dia.`;
       }
 
       formatSection = `1. **SAUDAÇÃO OBRIGATÓRIA:**
@@ -1137,12 +1153,20 @@ Il comitato "Uno spazio per la poesia"
 
     } else {
       // ITALIANO (Default)
+      const hasContributed = hasPoem || hadPreviousPoetry;
+      
+      const infoLink = "Le ricordiamo che le poesie selezionate vengono pubblicate settimanalmente alle porte di ingresso della Basilica e sulla pagina web dedicata: bit.ly/spaziopoesia.";
+      const waitingTerm = hasContributed ? "ancora altri Suoi versi" : "i Suoi versi";
+      const closingPhrase = `In attesa di poter apprezzare ${waitingTerm}, Le auguriamo una buona giornata.`;
+
       if (category === 'parish_info_request') {
         closingStatement = "Siamo a disposizione per ogni tipo di informazione o aiuto relativamente alla presente iniziativa.";
       } else if (hasPoem) {
-        closingStatement = "La ringraziamo per il suo apprezzato contributo.";
+        // Se ha inviato qualcosa ora, diamo le info complete
+        closingStatement = `${infoLink}\n\n${closingPhrase}`;
       } else {
-        closingStatement = "In attesa di poter apprezzare i Suoi versi, Le auguriamo una buona giornata.";
+        // Se è solo un follow-up senza nuovi versi, diamo solo la chiusa intelligente (o le info se non le ha mai avute)
+        closingStatement = hasContributed ? closingPhrase : `${infoLink}\n\n${closingPhrase}`;
       }
 
       formatSection = `1. **SALUTO OBBLIGATORIO:**
