@@ -1185,7 +1185,8 @@ class EmailProcessor {
           result.status === 'replied' ||
           result.status === 'error' ||
           result.status === 'validation_failed' ||
-          result.status === 'filtered'
+          result.status === 'filtered' ||
+          result.status === 'skipped' // <- M3 Include ora gli skipped totali
         );
 
         if (isEffectiveWork) {

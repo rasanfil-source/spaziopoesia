@@ -627,6 +627,8 @@ function _sheetRowsToText(rows) {
 function _formatCellForKnowledgeText(cell) {
   if (cell == null) return '';
 
+  if (typeof cell === 'string' && cell.trim().startsWith('#')) return ''; // Salta errori formula tipo #REF! o #N/A
+
   if (cell instanceof Date && !isNaN(cell.getTime())) {
     return _formatDateForKnowledgeText(cell);
   }
