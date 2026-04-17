@@ -387,39 +387,6 @@ function _parseSheetToStructured(data) {
   });
 }
 
-function _parseStrictHour(value) {
-  if (typeof value === 'number') {
-    // Orario nativo di Sheets: frazione di giorno (es. 08:00 => 0.3333...)
-    if (value >= 0 && value < 1) {
-      return Math.floor(value * 24);
-    }
-
-    if (Number.isInteger(value) && value >= 0 && value <= 23) {
-      return value;
-    }
-
-    return null;
-  }
-
-  const normalized = String(value == null ? '' : value).trim();
-
-  const hhmm = normalized.match(/^(\d{1,2}):(\d{2})$/);
-  if (hhmm) {
-    const hourFromTime = Number(hhmm[1]);
-    const minuteFromTime = Number(hhmm[2]);
-    if (!Number.isInteger(hourFromTime) || !Number.isInteger(minuteFromTime)) return null;
-    if (hourFromTime < 0 || hourFromTime > 23 || minuteFromTime < 0 || minuteFromTime > 59) return null;
-    return hourFromTime;
-  }
-
-  if (!/^\d{1,2}$/.test(normalized)) return null;
-
-  const hour = Number(normalized);
-  if (!Number.isInteger(hour) || hour < 0 || hour > 24) return null;
-
-  return hour;
-}
-
 function _loadAdvancedConfig(ss) {
   const config = { systemEnabled: true, vacationPeriods: [], suspensionRules: {}, ignoreDomains: [], ignoreKeywords: [] };
   const sheet = ss.getSheetByName('Controllo');

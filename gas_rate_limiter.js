@@ -245,7 +245,7 @@ class GeminiRateLimiter {
 
     // Usa strategia da CONFIG (o fallback)
     // Aggiunge 'classification' come alias di 'quick_check' se non definito
-    const taskStrategies = this.strategies;
+    const taskStrategies = Object.assign({}, this.strategies);
     if (!taskStrategies['classification']) {
       taskStrategies['classification'] = taskStrategies['quick_check'] || ['flash-lite', 'flash-2.5'];
     }
@@ -944,7 +944,7 @@ class GeminiRateLimiter {
   _estimateTokens(text) {
     if (!text) return 0;
 
-    const wordCount = text.split(/\s+/).length;
+    const wordCount = text.trim().split(/\s+/).filter(Boolean).length;
     const baseTokens = Math.ceil(wordCount * 1.25);
     const overhead = Math.ceil(baseTokens * 0.1);
     const charEstimate = Math.ceil(text.length / 3.5);

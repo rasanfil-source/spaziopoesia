@@ -161,9 +161,20 @@ class ResponseValidator {
     const details = {};
     let score = 1.0;
 
-    // Variabile per gestire la risposta (che potrebbe essere perfezionata)
-    let currentResponse = typeof response === 'string' ? response : (response == null ? '' : String(response));
-    let wasRefined = false;
+    let textPerfezionato = response;
+    let modified = false;
+
+    // 0. Correzione Thinking Leak (se rilevato in fase regex)
+    if (errors.some(e => e.includes('RAGIONAMENTO ESPOSTO'))) {
+      const textSenzaLeak = this._rimuoviThinkingLeak(textPerfezionato);
+      if (textSenzaLeak !== textPerfezionato) {
+        textPerfezionato = textSenzaLeak;
+        modified = true;
+        console.log('   🩺 Rimozione Thinking Leak applicata');
+      }
+    }
+
+    // 1. Correzione Link duplicati (Markdown)
 
     const safeDetectedLanguage = typeof detectedLanguage === 'string' && detectedLanguage.length > 0
       ? detectedLanguage
@@ -465,7 +476,7 @@ class ResponseValidator {
     const foundForbidden = this.forbiddenPhrases.filter((phrase) => {
       if (!phrase || !phrase.trim()) return false;
       const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const rx = new RegExp(`(?:^|\\s)${escaped}(?:\\s|$|[.,!?;:])`, 'i');
+      const rx = new RegExp(`\\b${escaped}\\b`, 'i'); // Utilizza controlli boundaries stretti
       return rx.test(responseLower);
     });
 

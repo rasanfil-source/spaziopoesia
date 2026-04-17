@@ -618,13 +618,12 @@ ${sections.join('\n')}
 
   _renderKnowledgeBase(kb) {
     if (!kb) return '';
-    return `══════════════════════════════════════════════════════
-📖 KNOWLEDGE BASE (INFORMAZIONI DI RIFERIMENTO)
-══════════════════════════════════════════════════════
-
+    return `**INFORMAZIONI DI RIFERIMENTO E KNOWLEDGE BASE:**
+<knowledge_base>
 ${kb}
+</knowledge_base>
 
-══════════════════════════════════════════════════════`;
+**REGOLA FONDAMENTALE:** Usa SOLO informazioni presenti sopra. NON inventare.`;
   }
 
   // ===================================
@@ -741,18 +740,6 @@ ESEMPIO DI APERTURA:
 • "${apologyLine}"`;
   }
 
-  // ========================================================================
-  // TEMPLATE 8: KNOWLEDGE BASE
-  // ========================================================================
-
-  _renderKnowledgeBase(knowledgeBase) {
-    return `**INFORMAZIONI DI RIFERIMENTO:**
-<knowledge_base>
-${knowledgeBase}
-</knowledge_base>
-
-**REGOLA FONDAMENTALE:** Usa SOLO informazioni presenti sopra. NON inventare.`;
-  }
 
   // TEMPLATE 9 rimosso (VERIFICA TERRITORIO)
   // ========================================================================

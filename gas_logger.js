@@ -24,6 +24,7 @@ class AppLogger {
    * Log generico
    */
   _log(level, message, data = {}) {
+    if (typeof level === 'undefined' || !Object.prototype.hasOwnProperty.call(LogLevel, level)) return;
     if (LogLevel[level] < this.minLevel) return;
 
     const logEntry = {
@@ -118,11 +119,18 @@ Script ID: ${this.config.SCRIPT_ID || 'Unknown'}
       const lastNotification = PropertiesService.getScriptProperties()
         .getProperty('last_error_notification');
       const now = Date.now();
-
-      if (!lastNotification || (now - parseInt(lastNotification)) > 300000) {
-        GmailApp.sendEmail(adminEmail, subject, body);
-        PropertiesService.getScriptProperties()
-          .setProperty('last_error_notification', now.toString());
+      
+      const lock = LockService.getScriptLock();
+      if (lock.tryLock(3000)) {
+        try {
+          if (!lastNotification || (now - parseInt(lastNotification)) > 300000) {
+            GmailApp.sendEmail(adminEmail, subject, body);
+            PropertiesService.getScriptProperties()
+              .setProperty('last_error_notification', now.toString());
+          }
+        } finally {
+          lock.releaseLock();
+        }
       }
     } catch (e) {
       console.error('Invio notifica errore fallito:', e.message);

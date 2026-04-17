@@ -791,7 +791,7 @@ class EmailProcessor {
       const attemptStrategy = [
         { name: 'Primary-Flash2.5', key: this.geminiService.primaryKey, model: flashModel, skipRateLimit: false },
         { name: 'Backup-Flash2.5', key: this.geminiService.backupKey, model: flashModel, skipRateLimit: true },
-        { name: 'Fallback-Lite', key: this.geminiService.primaryKey, model: liteModel, skipRateLimit: false }
+        { name: 'Fallback-Lite', key: this.geminiService.backupKey || this.geminiService.primaryKey, model: liteModel, skipRateLimit: true }
       ];
 
       // Esecuzione Loop Strategico

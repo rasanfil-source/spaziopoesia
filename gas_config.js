@@ -62,7 +62,7 @@ const CONFIG = {
   CACHE_RACE_SLEEP_MS: 200,             // Attesa anti-race condition
 
   // === Alias noti (anti-loop: il bot riconosce sé stesso anche quando invia da alias) ===
-  KNOWN_ALIASES: ['info@parrocchiasanteugenio.it'],
+  KNOWN_ALIASES: (function() { const p = PropertiesService.getScriptProperties().getProperty('KNOWN_ALIASES'); return p ? p.split(',').map(s=>s.trim()) : ['info@parrocchiasanteugenio.it']; })(),
 
   // === Knowledge Base ===
   SPREADSHEET_ID: PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID'),
@@ -95,7 +95,7 @@ const CONFIG = {
     LEVEL: 'INFO',                     // DEBUG, INFO, WARN, ERROR
     STRUCTURED: true,                  // Log in formato JSON
     SEND_ERROR_NOTIFICATIONS: true,    // Invia email per errori critici
-    ADMIN_EMAIL: 'rasanfil@gmail.com'  // Email admin per notifiche
+    ADMIN_EMAIL: PropertiesService.getScriptProperties().getProperty('ADMIN_EMAIL') || 'rasanfil@gmail.com'
   },
 
   // === Metriche Giornaliere ===
@@ -221,6 +221,10 @@ function validateConfig() {
   checkType('VALIDATION_ENABLED', CONFIG.VALIDATION_ENABLED, 'boolean');
   checkType('VALIDATION_MIN_SCORE', CONFIG.VALIDATION_MIN_SCORE, 'number');
   checkRange('VALIDATION_MIN_SCORE', CONFIG.VALIDATION_MIN_SCORE, 0.0, 1.0);
+  
+  if (!CONFIG.GEMINI_MODELS || Object.keys(CONFIG.GEMINI_MODELS).length === 0) {
+    errors.push('CRITICO: GEMINI_MODELS mancante o vuoto');
+  }
 
   // Arrays
   if (!Array.isArray(CONFIG.IGNORE_DOMAINS)) errors.push("Errore Config: 'IGNORE_DOMAINS' deve essere un array");
