@@ -161,15 +161,15 @@ class ResponseValidator {
     const details = {};
     let score = 1.0;
 
-    let textPerfezionato = response;
-    let modified = false;
+    let currentResponse = typeof response === 'string' ? response : '';
+    let wasRefined = false;
 
     // 0. Correzione Thinking Leak (se rilevato in fase regex)
     if (errors.some(e => e.includes('RAGIONAMENTO ESPOSTO'))) {
-      const textSenzaLeak = this._rimuoviThinkingLeak(textPerfezionato);
-      if (textSenzaLeak !== textPerfezionato) {
-        textPerfezionato = textSenzaLeak;
-        modified = true;
+      const textSenzaLeak = this._rimuoviThinkingLeak(currentResponse);
+      if (textSenzaLeak !== currentResponse) {
+        currentResponse = textSenzaLeak;
+        wasRefined = true;
         console.log('   🩺 Rimozione Thinking Leak applicata');
       }
     }
