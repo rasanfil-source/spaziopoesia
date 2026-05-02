@@ -324,10 +324,13 @@ class PromptEngine {
 ❌ Nome minuscolo: "federica" → SBAGLIATO
 ✅ Nome maiuscolo: "Federica" → GIUSTO
 
+❌ "roma" (minuscolo) → SBAGLIATO
+✅ "Roma" (maiuscolo) → GIUSTO
+
 ❌ Ragionamento esposto: "La KB dice...", "Devo correggere..." → BLOCCA RISPOSTA
 ✅ Risposta pulita: solo contenuto finale → GIUSTO
 
-❌ Loop "contattaci": L'utente ci ha gi\u00E0 scritto! Non dire "scrivici a info@..."
+❌ Loop "contattaci": L'utente ci ha già scritto! Non dire "scrivici a info@..."
 ✅ Presa in carico: "Inoltrerò la richiesta", "Verificheremo"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
@@ -350,11 +353,14 @@ class PromptEngine {
     if (detectedLanguage === 'it') {
       checks.push('□ Minuscola dopo virgola (es: "Ciao, siamo" NON "Ciao, Siamo")');
       checks.push('□ Nomi propri MAIUSCOLI (es: "Federica" NON "federica")');
+      checks.push('□ "Roma" SEMPRE con la maiuscola (specialmente nella firma)');
       checks.push('□ Ho corretto errori grammaticali dell\'utente (NON copiati)');
     } else if (detectedLanguage === 'en') {
       checks.push('□ ENTIRE response in ENGLISH (NO Italian words)');
     } else if (detectedLanguage === 'es') {
       checks.push('□ TODA la respuesta en ESPAÑOL (NO palabras italianas)');
+    } else if (detectedLanguage === 'pt') {
+      checks.push('□ TODA a resposta em PORTUGUÊS (NÃO use palavras italianas)');
     }
 
 
@@ -365,7 +371,7 @@ class PromptEngine {
     }
 
     // Controlli anti-ridondanza
-    checks.push('□ Se l\'utente ha detto "Ho gi\u00E0 X", NON ho fornito X di nuovo');
+    checks.push('□ Se l\'utente ha detto "Ho già X", NON ho fornito X di nuovo');
     checks.push('□ Link formato: "Descrizione: https://url" NON "[url](url)"');
 
     return `
@@ -409,7 +415,7 @@ un sincero apprezzamento da parte della nostra segreteria.
     return `══════════════════════════════════════════════════════
 🧭 CONTINUITÀ, UMANITÀ E FOCUS (LINEE GUIDA ESSENZIALI)
 ══════════════════════════════════════════════════════
-1) CONTINUITÀ: Se emerge che l'utente ha gi\u00E0 ricevuto una risposta su questo tema, evita di ripetere informazioni identiche. Usa al massimo 1 frase di continuità (es. "Riprendo volentieri da quanto detto..."), poi vai al punto.
+1) CONTINUITÀ: Se emerge che l'utente ha già ricevuto una risposta su questo tema, evita di ripetere informazioni identiche. Usa al massimo 1 frase di continuità (es. "Riprendo volentieri da quanto detto..."), poi vai al punto.
 2) UMANITÀ MISURATA: Usa una frase empatica SOLO se il messaggio mostra un chiaro segnale emotivo o pastorale. Altrimenti rispondi in modo diretto e sobrio.
 3) FOCUS: Rispondi prima al tema principale (topic). Aggiungi solo informazioni secondarie se strettamente utili.
 4) COERENZA LINGUISTICA: Mantieni la stessa lingua e livello di formalità dell'email ricevuta.
@@ -509,7 +515,7 @@ DEVE:
 ✅ Usar despedidas portuguesas: "Com os melhores cumprimentos," "Atenciosamente,"
 ✅ Manter um registo formal e cordial
 
-N\u00C3O DEVE:
+NÃO DEVE:
 ❌ Usar palavras italianas
 ❌ Misturar idiomas
 
@@ -665,11 +671,11 @@ ESEMPI DI APERTURA CORRETTA:
 
 📌 MODALITÀ SALUTO: FOLLOW-UP RECENTE (conversazione in corso)
 
-La conversazione è gi\u00E0 avviata. Questa NON è la prima interazione.
+La conversazione è già avviata. Questa NON è la prima interazione.
 
 REGOLE OBBLIGATORIE:
 ✅ NON usare saluti rituali completi (Buongiorno, Buon Natale, ecc.)
-✅ NON ripetere saluti festivi gi\u00E0 usati nel thread
+✅ NON ripetere saluti festivi già usati nel thread
 ✅ Inizia DIRETTAMENTE dal contenuto OPPURE usa una frase di continuità
 
 FRASI DI CONTINUITÀ CORRETTE:
@@ -786,7 +792,7 @@ Non mostrare mai entrambi i set di orari.`;
 
 3. **EVENTI GIÀ PASSATI - COMUNICALO CHIARAMENTE**
    Se l'utente chiede di un evento ANNUALE e la data è GIÀ PASSATA:
-   ✅ DÌ che l'evento di quest'anno si è gi\u00E0 svolto
+   ✅ DÌ che l'evento di quest'anno si è già svolto
    ✅ Indica QUANDO si è svolto
    ✅ Suggerisci QUANDO chiedere info per l'anno prossimo
 
@@ -896,7 +902,7 @@ ${hints[category]}`;
 
   _renderConversationHistory(conversationHistory) {
     return `**CRONOLOGIA CONVERSAZIONE:**
-Messaggi precedenti per contesto. Non ripetere info gi\u00E0 fornite.
+Messaggi precedenti per contesto. Non ripetere info già fornite.
 <conversation_history>
 ${conversationHistory}
 </conversation_history>`;
@@ -1037,6 +1043,7 @@ Il comitato "Uno spazio per la poesia"
     const prevCat = (memoryContext && memoryContext.category) ? memoryContext.category.toString().toLowerCase() : '';
     const hadPreviousPoetry = prevCat.includes('poetr') || prevCat.includes('poem');
 
+    const hasContributed = hasPoem || hadPreviousPoetry;
     let closingStatement;
     let formatSection;
     let contentSection;
@@ -1050,8 +1057,9 @@ Il comitato "Uno spazio per la poesia"
         const closingPhrase = "Looking forward to appreciating more of your verses, we wish you a good day.";
         closingStatement = `${infoLink}\n\n${closingPhrase}`;
       } else {
+        const infoLink = "Please note that selected poems are published weekly at the entrance doors of the Basilica and on the dedicated web page: bit.ly/spaziopoesia.";
         const waitingText = hadPreviousPoetry ? "Looking forward to appreciating more of your verses" : "Looking forward to appreciating your verses";
-        closingStatement = `${waitingText}, we wish you a good day.`;
+        closingStatement = hasContributed ? `${waitingText}, we wish you a good day.` : `${infoLink}\n\n${waitingText}, we wish you a good day.`;
       }
 
       formatSection = `1. **MANDATORY GREETING:**
@@ -1082,8 +1090,9 @@ Il comitato "Uno spazio per la poesia"
         const closingPhrase = "A la espera de poder apreciar aún más sus versos, le deseamos un buen día.";
         closingStatement = `${infoLink}\n\n${closingPhrase}`;
       } else {
+        const infoLink = "Le recordamos que las poesías seleccionadas se publican semanalmente en las puertas de entrada de la Basílica y en la página web dedicada: bit.ly/spaziopoesia.";
         const waitingText = hadPreviousPoetry ? "A la espera de poder apreciar aún más sus versos" : "A la espera de poder apreciar sus versos";
-        closingStatement = `${waitingText}, le deseamos un buen día.`;
+        closingStatement = hasContributed ? `${waitingText}, le deseamos un buen día.` : `${infoLink}\n\n${waitingText}, le deseamos un buen día.`;
       }
 
       formatSection = `1. **SALUDO OBLIGATORIO:**
@@ -1107,15 +1116,16 @@ Il comitato "Uno spazio per la poesia"
    • Usa español para todo: saludo, cuerpo, despedida`;
 
     } else if (lang === 'pt') {
+      const infoLink = "Lembramos que as poesias selecionadas são publicadas semanalmente nas portas de entrada da Basílica e na página web dedicada: bit.ly/spaziopoesia.";
+      const waitingTerm = hasContributed ? "ainda outros seus versos" : "os seus versos";
+      const closingPhrase = `Na expectativa de podermos apreciar ${waitingTerm}, desejamos-lhe um bom dia.`;
+
       if (category === 'parish_info_request') {
         closingStatement = "Estamos à disposição para qualquer informação ou ajuda relativa à presente iniciativa.";
       } else if (hasPoem) {
-        const infoLink = "Lembramos que as poesias selecionadas são publicadas semanalmente nas portas de entrada da Basílica e na página web dedicada: bit.ly/spaziopoesia.";
-        const closingPhrase = "Na expectativa de podermos apreciar ainda mais os seus versos, desejamos-lhe um bom dia.";
         closingStatement = `${infoLink}\n\n${closingPhrase}`;
       } else {
-        const waitingText = hadPreviousPoetry ? "Na expectativa de podermos apreciar ainda mais os seus versos" : "Na expectativa de podermos apreciar os seus versos";
-        closingStatement = `${waitingText}, desejamos-lhe um bom dia.`;
+        closingStatement = hasContributed ? closingPhrase : `${infoLink}\n\n${closingPhrase}`;
       }
 
       formatSection = `1. **SAUDAÇÃO OBRIGATÓRIA:**
@@ -1135,23 +1145,19 @@ Il comitato "Uno spazio per la poesia"
    • Seguimiento (Re:): sê mais direto e conciso`;
 
       languageReminder = `4. **IDIOMA: ⚠️ RESPONDE APENAS EM PORTUGUÊS**
-   • NÃO são permitidas palavras italianas (exceto a firma do comitê e possivelmente despedida)
+   • NÃO são permitidas palavras italianas (exceto a assinatura do comité e possivelmente a despedida)
    • Usa português para tudo: saudação, corpo, despedida`;
 
-      const hasContributed = hasPoem || hadPreviousPoetry;
-      
+    } else {
       const infoLink = "Le ricordiamo che le poesie selezionate vengono pubblicate settimanalmente alle porte di ingresso della Basilica e sulla pagina web dedicata: bit.ly/spaziopoesia.";
-      // Se abbiamo appena ricevuto una poesia, usiamo "ancora altri" per evitare l'effetto ridicolo segnalato dall'utente
       const waitingTerm = hasContributed ? "ancora altri Suoi versi" : "i Suoi versi";
       const closingPhrase = `In attesa di poter apprezzare ${waitingTerm}, Le auguriamo una buona giornata.`;
 
       if (category === 'parish_info_request') {
         closingStatement = "Siamo a disposizione per ogni tipo di informazione o aiuto relativamente alla presente iniziativa.";
       } else if (hasPoem) {
-        // Se ha inviato qualcosa ora, diamo le info complete
         closingStatement = `${infoLink}\n\n${closingPhrase}`;
       } else {
-        // Se è solo un follow-up senza nuovi versi, diamo solo la chiusa intelligente (o le info se non le ha mai avute)
         closingStatement = hasContributed ? closingPhrase : `${infoLink}\n\n${closingPhrase}`;
       }
 
@@ -1163,7 +1169,8 @@ Il comitato "Uno spazio per la poesia"
    ${salutation}
    [Corpo conciso e pertinente - ✅ NO TRAILING NEWLINES]
    ${closingStatement}
-   Il comitato "Uno spazio per la poesia"`;
+   La Segreteria dell'iniziativa "Uno spazio per la poesia"
+   Parrocchia di Sant'Eugenio, Roma`;
 
       contentSection = `3. **Contenuto:**
    • Rispondi SOLO a ciò che è chiesto
@@ -1173,7 +1180,6 @@ Il comitato "Uno spazio per la poesia"
 
       languageReminder = `4. **Lingua:** Rispondi in italiano`;
     }
-
 
     return `**LINEE GUIDA RISPOSTA:**
 

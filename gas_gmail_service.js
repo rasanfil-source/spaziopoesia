@@ -149,7 +149,7 @@ class GmailService {
     getMessageIdsWithLabel(labelName, onlyInbox = true, options = {}) {
         try {
             const label = this.getOrCreateLabel(labelName);
-            const labelId = label.getId();
+            const labelId = label ? label.getId() : null;
 
             const messageIds = new Set();
             let pageToken;
