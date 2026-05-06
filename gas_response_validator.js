@@ -970,6 +970,14 @@ class ResponseValidator {
       }
     }
 
+    // 4. Correzione Nomi Propri (es. "roma" -> "Roma")
+    const nounsOttimizzati = this._ottimizzaProperNouns(textPerfezionato);
+    if (nounsOttimizzati !== textPerfezionato) {
+      textPerfezionato = nounsOttimizzati;
+      modified = true;
+      console.log('   🩺 Ottimizzazione Nomi Propri applicata');
+    }
+
     return { fixed: modified, text: textPerfezionato };
   }
 
@@ -1103,6 +1111,29 @@ class ResponseValidator {
           return fullMatch; // Mantieni maiuscola: probabile nome doppio
         }
         return `,${sep}${p1.toLowerCase()}`;
+      });
+    });
+
+    return result;
+  }
+
+  /**
+   * Corregge la capitalizzazione di nomi propri critici (es. "roma" -> "Roma")
+   * Assicura che città e nomi fondamentali siano sempre scritti correttamente.
+   */
+  _ottimizzaProperNouns(text) {
+    let result = text;
+    // Lista di nomi propri che devono essere sempre maiuscoli (case-insensitive search)
+    const properNouns = ['Roma'];
+
+    properNouns.forEach(noun => {
+      const escaped = this._escapeRegex(noun);
+      // Boundary \b per evitare di colpire parole che contengono la stringa (es. "romanzesco")
+      const regex = new RegExp(`\\b${escaped}\\b`, 'gi');
+      result = result.replace(regex, (match) => {
+        // Se è già tutto maiuscolo (ROMA), lo lasciamo così o lo normalizziamo?
+        // Per ora normalizziamo alla versione CamelCase (Roma) per coerenza istituzionale
+        return noun;
       });
     });
 
