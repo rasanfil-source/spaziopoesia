@@ -6,7 +6,7 @@
 const CONFIG = {
   // === API ===
   GEMINI_API_KEY: PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY'),
-  MODEL_NAME: 'gemini-2.5-flash',
+  MODEL_NAME: 'gemini-3.1-flash-lite',
 
   // === Generazione ===
   TEMPERATURE: 0.5,
@@ -30,9 +30,9 @@ const CONFIG = {
   LABEL_NAME: 'IA',                    // Label per email processate
   ERROR_LABEL_NAME: 'Errore',          // Label per errori
   VALIDATION_ERROR_LABEL: 'Verifica',  // Label per risposte da rivedere
-  // Ridotto a 3 per supportare strategia "Cross-Key Quality First"
-  // Fino a 4 chiamate API per email → batch ridotto per prevenire timeout GAS (6 min)
+  // Configurazione dei limiti operativi per garantire stabilità e rispetto delle quote (RPD 3.500).
   MAX_EMAILS_PER_RUN: 3,
+  SAFETY_VALVE_THRESHOLD: 0.8,       // Regolazione batch in base al carico operativo RPD
   MAX_CONSECUTIVE_EXTERNAL: 5,        // Soglia per rilevamento email loop
   EMPTY_INBOX_WARNING_THRESHOLD: 5,   // Soglia per warning inbox vuota
   SUSPENSION_STALE_UNREAD_HOURS: 12,    // Paracadute: processa unread vecchie anche in fascia sospesa
@@ -84,7 +84,7 @@ const CONFIG = {
   USE_RATE_LIMITER: true,              // Rate limiter intelligente abilitato
 
   // === Limiti Token (Prompt Engine) ===
-  MAX_SAFE_TOKENS: 50000,              // Limite massimo token per prompt (più sicuro per timeout GAS)
+  MAX_SAFE_TOKENS: 100000,             // Aumentato per Gemini 3.1 Flash-Lite
   KB_TOKEN_BUDGET_RATIO: 0.5,          // Percentuale budget KB rispetto a max token
 
   // === Limiti Thread ===
@@ -104,9 +104,27 @@ const CONFIG = {
   METRICS_SHEET_NAME: 'DailyMetrics',
 
   // === Modelli Gemini (configurazione centralizzata) ===
-  // Aggiornato: Gennaio 2026
+  // Aggiornato: Maggio 2026 - Gemini 3.1 Flash-Lite Free Tier
+  GEMINI_FREE_TIER_NOTES: {
+    contextWindowTokens: 1048576,
+    rpm: 2000,
+    tpm: 2000000,
+    rpd: 3500,
+    groundingSharedRpd: 1500,
+    countTokensApiAllowed: false,
+    contextCachingSupported: true
+  },
+
+  GEMINI_CONTEXT_CACHE: {
+    enabled: true,
+    ttlSeconds: 3300,                  // 55 minuti
+    expirySkewMs: 90000,               // Ricrea prima della scadenza
+    minCacheableTokens: 1024,
+    splitMarker: '**EMAIL DA RISPONDERE:**',
+    propertyPrefix: 'gemini_context_cache_v3_'
+  },
+
   GEMINI_MODELS: {
-    // Modello premium: qualità massima per generazione risposte
     'flash-2.5': {
       name: 'gemini-2.5-flash',
       rpm: 15,
@@ -114,21 +132,27 @@ const CONFIG = {
       rpd: 1500,
       useCases: ['generation']
     },
-    // Modello veloce: quick check, classificazione, validazione semantica e fallback
+    'flash-3.1-lite': {
+      name: 'gemini-3.1-flash-lite',
+      rpm: 2000,
+      tpm: 2000000,
+      rpd: 3500,
+      useCases: ['generation']
+    },
     'flash-lite': {
-      name: 'gemini-2.5-flash-lite',
-      rpm: 10,
-      tpm: 1000000,
-      rpd: 1500,
+      name: 'gemini-3.1-flash-lite',
+      rpm: 2000,
+      tpm: 2000000,
+      rpd: 3500,
       useCases: ['quick_check', 'classification', 'semantic', 'fallback']
     }
   },
 
   MODEL_STRATEGY: {
-    'quick_check': ['flash-lite', 'flash-2.5'],
-    'generation': ['flash-2.5', 'flash-lite'],
-    'semantic': ['flash-lite', 'flash-2.5'],
-    'fallback': ['flash-lite', 'flash-2.5']
+    'quick_check': ['flash-lite', 'flash-3.1-lite', 'flash-2.5'],
+    'generation': ['flash-2.5', 'flash-3.1-lite', 'flash-lite'],
+    'semantic': ['flash-lite', 'flash-3.1-lite', 'flash-2.5'],
+    'fallback': ['flash-lite', 'flash-3.1-lite', 'flash-2.5']
   },
 
   // === Liste di esclusione ===

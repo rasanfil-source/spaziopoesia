@@ -242,6 +242,129 @@ class GeminiService {
   }
 
   /**
+   * Implementazione Context Caching (REST v1beta).
+   * Gestisce il salvataggio in PropertiesService dell'ID cache e della scadenza.
+   */
+  getOrCreateCachedContent(content, systemInstructions, tools = []) {
+    if (!this.config.GEMINI_CONTEXT_CACHE?.enabled) return null;
+
+    const cacheConfig = this.config.GEMINI_CONTEXT_CACHE;
+    const propPrefix = cacheConfig.propertyPrefix || 'gemini_context_cache_';
+    const cacheKey = propPrefix + 'name';
+    const expiryKey = propPrefix + 'expiry';
+
+    const cachedName = this.props.getProperty(cacheKey);
+    const cachedExpiry = parseInt(this.props.getProperty(expiryKey) || '0', 10);
+    const now = Date.now();
+
+    // Se esiste ed è valida, restituisci
+    if (cachedName && cachedExpiry > (now + (cacheConfig.expirySkewMs || 0))) {
+      console.log(`♻️ Uso Context Cache esistente: ${cachedName} (scadenza: ${new Date(cachedExpiry).toISOString()})`);
+      return cachedName;
+    }
+
+    console.log('🆕 Creazione nuova Context Cache...');
+    
+    // Costruzione payload REST per /cachedContents
+    const payload = {
+      model: `models/${this.modelName}`,
+      ttl: `${cacheConfig.ttlSeconds || 3600}s`,
+      contents: [{ parts: [{ text: content }] }],
+      systemInstruction: systemInstructions ? { parts: [{ text: systemInstructions }] } : undefined,
+      tools: tools.length > 0 ? tools : undefined
+    };
+
+    const url = `https://generativelanguage.googleapis.com/v1beta/cachedContents?key=${this.primaryKey}`;
+    
+    try {
+      const response = this.fetchFn(url, {
+        method: 'POST',
+        contentType: 'application/json',
+        payload: JSON.stringify(payload),
+        muteHttpExceptions: true
+      });
+
+      const code = response.getResponseCode();
+      const body = response.getContentText();
+
+      if (code !== 200) {
+        console.warn(`⚠️ Creazione cache fallita (${code}): ${body}`);
+        return null;
+      }
+
+      const data = JSON.parse(body);
+      const name = data.name;
+      // Stima scadenza (TTL locale)
+      const expiry = now + ((cacheConfig.ttlSeconds || 3600) * 1000);
+
+      this.props.setProperties({
+        [cacheKey]: name,
+        [expiryKey]: String(expiry)
+      });
+
+      console.log(`✅ Nuova Context Cache creata: ${name}`);
+      
+      // Tracciamento RPD per chiamata ausiliaria
+      if (this.rateLimiter) {
+        this.rateLimiter.trackAuxiliaryRequest(this.modelName, 0, 'cache_creation');
+      }
+
+      return name;
+    } catch (e) {
+      console.error(`❌ Eccezione creazione cache: ${e.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Generazione usando la cache esistente (Zero API Extra).
+   * Implementa Auto-healing (Punto 5): se 404, invalida e riprova.
+   */
+  _generateWithCachedContent_(cachedName, prompt, attempt = 1) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.modelName}:generateContent?key=${this.primaryKey}`;
+    
+    const payload = {
+      cachedContent: cachedName,
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: this.config.TEMPERATURE || 0.5,
+        maxOutputTokens: this.config.MAX_OUTPUT_TOKENS || 6000
+      }
+    };
+
+    try {
+      const response = this.fetchFn(url, {
+        method: 'POST',
+        contentType: 'application/json',
+        payload: JSON.stringify(payload),
+        muteHttpExceptions: true
+      });
+
+      const code = response.getResponseCode();
+      const body = response.getContentText();
+
+      if (code === 404 && attempt === 1) {
+        console.warn('🔄 Cache 404 miss (evicted). Invalidazione e retry...');
+        const propPrefix = this.config.GEMINI_CONTEXT_CACHE.propertyPrefix;
+        this.props.deleteProperty(propPrefix + 'name');
+        this.props.deleteProperty(propPrefix + 'expiry');
+        // In un flusso reale, il chiamante dovrebbe ricreare la cache.
+        throw new Error('CACHE_MISS_404');
+      }
+
+      if (code !== 200) {
+        throw new Error(`Generazione con cache fallita (${code}): ${body}`);
+      }
+
+      const result = JSON.parse(body);
+      const generatedText = result.candidates[0].content.parts[0].text;
+      return generatedText;
+    } catch (e) {
+      throw e;
+    }
+  }
+
+  /**
    * Controllo rapido con modello specifico
    * @param {string} emailContent - Contenuto email
    * @param {string} emailSubject - Oggetto email
@@ -1148,6 +1271,39 @@ Output JSON:
     const targetModel = options.modelName || this.modelName;
     const skipRateLimit = options.skipRateLimit || false;
     const attachments = options.attachments || [];
+    const useCache = this.config.GEMINI_CONTEXT_CACHE?.enabled && !skipRateLimit && attachments.length === 0;
+
+    // ═══════════════════════════════════════════════════════════════════
+    // CONTEXT CACHING PATH (v1beta REST)
+    // ═══════════════════════════════════════════════════════════════════
+    if (useCache) {
+      try {
+        const marker = this.config.GEMINI_CONTEXT_CACHE.splitMarker || '**EMAIL DA RISPONDERE:**';
+        const parts = prompt.split(marker);
+        
+        if (parts.length === 2) {
+          const context = parts[0];
+          const query = marker + parts[1];
+          const cachedName = this.getOrCreateCachedContent(context);
+          
+          if (cachedName) {
+            console.log(`🚀 Generazione con Context Caching: ${cachedName}`);
+            try {
+              const text = this._generateWithCachedContent_(cachedName, query);
+              return { success: true, text: text, modelUsed: targetModel, cached: true };
+            } catch (e) {
+              if (e.message === 'CACHE_MISS_404') {
+                console.warn('⚠️ Cache Miss 404 in generazione. Fallback a generazione standard.');
+              } else {
+                throw e;
+              }
+            }
+          }
+        }
+      } catch (cacheErr) {
+        console.warn(`⚠️ Errore Context Caching: ${cacheErr.message}. Procedo con generazione standard.`);
+      }
+    }
 
     // ═══════════════════════════════════════════════════════════════════
     // RATE LIMITER PATH (solo se abilitato E non skippato)
@@ -1213,7 +1369,11 @@ Output JSON:
    */
   _buildGenerateUrl(modelName) {
     const safeModel = modelName || this.modelName;
-    return `https://generativelanguage.googleapis.com/v1beta/models/${safeModel}:generateContent`;
+    // Supporto per v1beta per context caching
+    if (this.config.GEMINI_CONTEXT_CACHE?.enabled) {
+      return `https://generativelanguage.googleapis.com/v1beta/models/${safeModel}:generateContent`;
+    }
+    return `https://generativelanguage.googleapis.com/v1/models/${safeModel}:generateContent`;
   }
 
   /**

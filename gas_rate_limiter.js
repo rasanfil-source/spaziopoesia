@@ -28,14 +28,14 @@ class GeminiRateLimiter {
       // Fallback se CONFIG non disponibile
       console.warn('   \u26A0\uFE0F CONFIG.GEMINI_MODELS non trovato, uso default');
       this.models = {
-        'flash-2.5': {
-          name: 'gemini-2.5-flash',
-          rpm: 15, tpm: 1000000, rpd: 1500,
+        'flash-3.1-lite': {
+          name: 'gemini-3.1-flash-lite',
+          rpm: 2000, tpm: 2000000, rpd: 3500,
           useCases: ['generation', 'all']
         },
         'flash-lite': {
-          name: 'gemini-2.5-flash-lite',
-          rpm: 10, tpm: 1000000, rpd: 1500,
+          name: 'gemini-3.1-flash-lite',
+          rpm: 2000, tpm: 2000000, rpd: 3500,
           useCases: ['fallback', 'classification', 'quick_check']
         }
       };
@@ -116,10 +116,12 @@ class GeminiRateLimiter {
    */
   _normalizeDeprecatedModelNames(models) {
     const deprecatedMap = {
-      // Mappatura modelli ritirati verso equivalenti 2.5
-      'gemini-2.5-flash-exp': 'gemini-2.5-flash-lite',
-      'gemini-2.0-flash-exp': 'gemini-2.5-flash-lite',
-      'gemini-2.0-flash': 'gemini-2.5-flash-lite'
+      // Mappatura modelli ritirati verso lo standard 3.1 Lite.
+      // Il modello 2.5 Flash standard viene mantenuto come da richiesta utente.
+      'gemini-2.5-flash-lite': 'gemini-3.1-flash-lite',
+      'gemini-2.5-flash-exp': 'gemini-3.1-flash-lite',
+      'gemini-2.0-flash-exp': 'gemini-3.1-flash-lite',
+      'gemini-2.0-flash': 'gemini-3.1-flash-lite'
     };
 
     const normalized = {};
@@ -309,8 +311,21 @@ class GeminiRateLimiter {
       return { available: false, reason: 'model_not_found' };
     }
 
+    // Identifica il modello fisico condiviso per aggregare i consumi (es. flash-lite e flash-3.1-lite)
+    const physicalModelName = model.name;
+    let rpdUsed = 0;
+    let rpmUsed = 0;
+    let tpmUsed = 0;
+
+    for (const key of Object.keys(this.models)) {
+      if (this.models[key].name === physicalModelName) {
+        rpdUsed += parseInt(this.props.getProperty(`rpd_${key}`) || '0', 10) || 0;
+        rpmUsed += this._getRequestsInWindow('rpm', key);
+        tpmUsed += this._getTokensInWindow('tpm', key);
+      }
+    }
+
     // Controllo RPD
-    const rpdUsed = parseInt(this.props.getProperty(`rpd_${modelKey}`) || '0');
     const rpdLeft = model.rpd - rpdUsed;
 
     if (rpdLeft <= 0) {
@@ -323,7 +338,6 @@ class GeminiRateLimiter {
     }
 
     // Controllo RPM (ultimo minuto)
-    const rpmUsed = this._getRequestsInWindow('rpm', modelKey);
     const rpmLeft = model.rpm - rpmUsed;
 
     if (rpmLeft <= 0) {
@@ -336,7 +350,6 @@ class GeminiRateLimiter {
     }
 
     // Controllo TPM (ultimo minuto)
-    const tpmUsed = this._getTokensInWindow('tpm', modelKey);
     const tpmLeft = model.tpm - tpmUsed;
 
     if (tpmLeft < estimatedTokens) {
@@ -549,17 +562,18 @@ class GeminiRateLimiter {
   /**
    * Incrementa contatori persistenti con lock script-level.
    */
-  _incrementCountersAtomic(modelKey, tokensUsed) {
-    const lock = LockService.getScriptLock();
-    const gotLock = lock.tryLock(5000);
+  _incrementCountersAtomic(modelKey, tokensUsed, alreadyLocked = false) {
+    const lock = alreadyLocked ? null : LockService.getScriptLock();
+    // Lock Obbligatorio (Critico): garantisce l'atomicità di lettura/incremento RPD.
+    const gotLock = alreadyLocked || (lock && lock.tryLock(25000));
 
     if (!gotLock) {
       console.warn(`⚠️ Impossibile tracciare RPD/Token per ${modelKey} (Lock Timeout)`);
       const rpdKey = 'rpd_' + modelKey;
       const tokensKey = 'tokens_' + modelKey;
       return {
-        rpd: parseInt(this.props.getProperty(rpdKey) || '0'),
-        tokens: parseInt(this.props.getProperty(tokensKey) || '0')
+        rpd: parseInt(this.props.getProperty(rpdKey) || '0', 10) || 0,
+        tokens: parseInt(this.props.getProperty(tokensKey) || '0', 10) || 0
       };
     }
 
@@ -569,12 +583,13 @@ class GeminiRateLimiter {
       const tokensKey = 'tokens_' + modelKey;
       const todayPacific = this._getPacificDate();
       const lastRpdDate = this.props.getProperty(rpdDateKey) || '';
-      let currentRpd = parseInt(this.props.getProperty(rpdKey) || '0');
+      let currentRpd = parseInt(this.props.getProperty(rpdKey) || '0', 10) || 0;
+      let currentTokens = parseInt(this.props.getProperty(tokensKey) || '0', 10) || 0;
       if (lastRpdDate !== todayPacific) {
         currentRpd = 0;
+        currentTokens = 0;
         this.props.setProperty(rpdDateKey, todayPacific);
       }
-      const currentTokens = parseInt(this.props.getProperty(tokensKey) || '0');
       const nextRpd = currentRpd + 1;
       const nextTokens = currentTokens + (tokensUsed || 0);
 
@@ -583,7 +598,13 @@ class GeminiRateLimiter {
 
       return { rpd: nextRpd, tokens: nextTokens };
     } finally {
-      lock.releaseLock();
+      if (lock) {
+        try {
+          lock.releaseLock();
+        } catch (e) {
+          console.warn(`⚠️ Errore rilascio lock (CountersAtomic): ${e.message}`);
+        }
+      }
     }
   }
 
