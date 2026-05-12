@@ -1233,6 +1233,15 @@ class EmailProcessor {
       return stats;
 
     } finally {
+      // ⚠️ OTTIMIZZAZIONE: Flush finale del Rate Limiter prima del rilascio lock esecuzione
+      if (this.geminiService && typeof this.geminiService.flush === 'function') {
+        try {
+          this.geminiService.flush();
+        } catch (e) {
+          console.warn(`⚠️ Errore durante flush Rate Limiter in EmailProcessor: ${e.message}`);
+        }
+      }
+
       if (lockAcquiredHere) {
         try {
           executionLock.releaseLock();
@@ -1679,6 +1688,15 @@ class EmailProcessor {
     // Fallback su italiano se lingua non supportata
     const pattern = monthPatterns[language] || monthPatterns['it'];
     return pattern.test(text);
+  }
+
+  /**
+   * Propaga la richiesta di flush al GeminiService
+   */
+  flush() {
+    if (this.geminiService && typeof this.geminiService.flush === 'function') {
+      this.geminiService.flush();
+    }
   }
 }
 

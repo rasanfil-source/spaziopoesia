@@ -590,6 +590,11 @@ function main() {
       }
     }
   } finally {
+    // ⚠️ OTTIMIZZAZIONE: Flush finale del Rate Limiter (se non già fatto da processor)
+    if (typeof processor !== 'undefined' && processor && typeof processor.flush === 'function') {
+      try { processor.flush(); } catch (e) { }
+    }
+
     if (typeof hasExecutionLock !== 'undefined' && hasExecutionLock && executionLock) {
       executionLock.releaseLock();
     }

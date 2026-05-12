@@ -264,7 +264,7 @@ class GeminiService {
     }
 
     console.log('🆕 Creazione nuova Context Cache...');
-
+    
     // Costruzione payload REST per /cachedContents
     const payload = {
       model: `models/${this.modelName}`,
@@ -275,7 +275,7 @@ class GeminiService {
     };
 
     const url = `https://generativelanguage.googleapis.com/v1beta/cachedContents?key=${this.primaryKey}`;
-
+    
     try {
       const response = this.fetchFn(url, {
         method: 'POST',
@@ -303,7 +303,7 @@ class GeminiService {
       });
 
       console.log(`✅ Nuova Context Cache creata: ${name}`);
-
+      
       // Tracciamento RPD per chiamata ausiliaria
       if (this.rateLimiter) {
         this.rateLimiter.trackAuxiliaryRequest(this.modelName, 0, 'cache_creation');
@@ -322,7 +322,7 @@ class GeminiService {
    */
   _generateWithCachedContent_(cachedName, prompt, attempt = 1) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.modelName}:generateContent?key=${this.primaryKey}`;
-
+    
     const payload = {
       cachedContent: cachedName,
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
@@ -1280,12 +1280,12 @@ Output JSON:
       try {
         const marker = this.config.GEMINI_CONTEXT_CACHE.splitMarker || '**EMAIL DA RISPONDERE:**';
         const parts = prompt.split(marker);
-
+        
         if (parts.length === 2) {
           const context = parts[0];
           const query = marker + parts[1];
           const cachedName = this.getOrCreateCachedContent(context);
-
+          
           if (cachedName) {
             console.log(`🚀 Generazione con Context Caching: ${cachedName}`);
             try {
@@ -1427,6 +1427,15 @@ Output JSON:
 
     results.isHealthy = results.connectionOk && results.canGenerate;
     return results;
+  }
+
+  /**
+   * Salva lo stato del Rate Limiter (RPD/RPM/TPM) se attivo.
+   */
+  flush() {
+    if (this.rateLimiter && typeof this.rateLimiter.flush === 'function') {
+      this.rateLimiter.flush();
+    }
   }
 }
 
