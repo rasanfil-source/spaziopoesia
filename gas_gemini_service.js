@@ -164,7 +164,7 @@ class GeminiService {
         method: 'POST',
         contentType: 'application/json',
         payload: JSON.stringify({
-          contents: [{ parts: requestParts }],
+          contents: [{ role: 'user', parts: requestParts }],
           generationConfig: {
             temperature: temperature,
             maxOutputTokens: maxTokens
@@ -264,18 +264,18 @@ class GeminiService {
     }
 
     console.log('🆕 Creazione nuova Context Cache...');
-    
+
     // Costruzione payload REST per /cachedContents
     const payload = {
       model: `models/${this.modelName}`,
       ttl: `${cacheConfig.ttlSeconds || 3600}s`,
-      contents: [{ parts: [{ text: content }] }],
+      contents: [{ role: 'user', parts: [{ text: content }] }],
       systemInstruction: systemInstructions ? { parts: [{ text: systemInstructions }] } : undefined,
       tools: tools.length > 0 ? tools : undefined
     };
 
     const url = `https://generativelanguage.googleapis.com/v1beta/cachedContents?key=${this.primaryKey}`;
-    
+
     try {
       const response = this.fetchFn(url, {
         method: 'POST',
@@ -303,7 +303,7 @@ class GeminiService {
       });
 
       console.log(`✅ Nuova Context Cache creata: ${name}`);
-      
+
       // Tracciamento RPD per chiamata ausiliaria
       if (this.rateLimiter) {
         this.rateLimiter.trackAuxiliaryRequest(this.modelName, 0, 'cache_creation');
@@ -322,10 +322,10 @@ class GeminiService {
    */
   _generateWithCachedContent_(cachedName, prompt, attempt = 1) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.modelName}:generateContent?key=${this.primaryKey}`;
-    
+
     const payload = {
       cachedContent: cachedName,
-      contents: [{ parts: [{ text: prompt }] }],
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
       generationConfig: {
         temperature: this.config.TEMPERATURE || 0.5,
         maxOutputTokens: this.config.MAX_OUTPUT_TOKENS || 6000
@@ -439,7 +439,7 @@ Output JSON:
         method: 'POST',
         contentType: 'application/json',
         payload: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
           generationConfig: {
             temperature: 0,
             maxOutputTokens: 1024,
@@ -459,7 +459,7 @@ Output JSON:
           method: 'POST',
           contentType: 'application/json',
           payload: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
             generationConfig: {
               temperature: 0,
               maxOutputTokens: 1024,
@@ -490,7 +490,7 @@ Output JSON:
           method: 'POST',
           contentType: 'application/json',
           payload: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
             generationConfig: {
               temperature: 0,
               maxOutputTokens: 1024,
@@ -1280,12 +1280,12 @@ Output JSON:
       try {
         const marker = this.config.GEMINI_CONTEXT_CACHE.splitMarker || '**EMAIL DA RISPONDERE:**';
         const parts = prompt.split(marker);
-        
+
         if (parts.length === 2) {
           const context = parts[0];
           const query = marker + parts[1];
           const cachedName = this.getOrCreateCachedContent(context);
-          
+
           if (cachedName) {
             console.log(`🚀 Generazione con Context Caching: ${cachedName}`);
             try {
@@ -1394,7 +1394,7 @@ Output JSON:
         method: 'POST',
         contentType: 'application/json',
         payload: JSON.stringify({
-          contents: [{ parts: [{ text: testPrompt }] }],
+          contents: [{ role: 'user', parts: [{ text: testPrompt }] }],
           generationConfig: {
             temperature: 0.1,
             maxOutputTokens: 10
