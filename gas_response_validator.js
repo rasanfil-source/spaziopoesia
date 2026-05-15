@@ -1090,7 +1090,12 @@ class ResponseValidator {
       return text;
     }
 
-    const capitalizationExceptions = ['Dio', 'Gesù', 'Maria', 'Santo', 'Padre', 'Lei', 'La', 'Ella'];
+    const capitalizationExceptions = [
+      'Dio', 'Gesù', 'Maria', 'Santo', 'Padre', 'Lei', 'La', 'Ella',
+      'Roma', 'Milano', 'Napoli', 'Torino', 'Firenze', 'Genova', 'Bologna',
+      'Venezia', 'Palermo', 'Catania', 'Bari', 'Verona', 'Padova',
+      'Italia', 'Europa', 'Vaticano', 'Cristo', 'Chiesa', 'Eugenio'
+    ];
     let result = text;
 
     // Per ogni parola vietata, cerca ", Parola" e sostituisci con ", parola"

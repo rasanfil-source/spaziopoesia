@@ -721,6 +721,13 @@ class GmailService {
         const sanitizedText = this._sanitizeHeaders(responseText);
 
         let finalResponse = sanitizedText;
+
+        // ⚠️ Ordine intenzionale: fixPunctuation PRIMA, applyReplacements DOPO.
+        // Le sostituzioni dal foglio Sostituzioni hanno l'ultima parola,
+        // così non vengono annullate da fixPunctuation (es. "Roma" → "roma").
+        finalResponse = this.fixPunctuation(finalResponse, messageDetails.senderName);
+        finalResponse = this.ensureGreetingLineBreak(finalResponse);
+
         if (typeof GLOBAL_CACHE !== 'undefined' && GLOBAL_CACHE.replacements) {
             const replacementCount = Object.keys(GLOBAL_CACHE.replacements).length;
             if (replacementCount > 0) {
@@ -728,9 +735,6 @@ class GmailService {
                 console.log(`   ✓ Applicate ${replacementCount} regole sostituzione`);
             }
         }
-
-        finalResponse = this.fixPunctuation(finalResponse, messageDetails.senderName);
-        finalResponse = this.ensureGreetingLineBreak(finalResponse);
 
         const htmlBody = (typeof markdownToHtml === 'function')
             ? markdownToHtml(finalResponse)
@@ -904,7 +908,14 @@ class GmailService {
 
         // Intenzionale: array locale ricreato a ogni chiamata, quindi la mutazione
         // serve solo ad ampliare le eccezioni per il messaggio corrente.
-        const exceptions = ['Don', 'Padre', 'Suor', 'Monsignor', 'Papa', 'Signore', 'Signora'];
+        // Include nomi propri (città, luoghi) che non devono MAI essere minuscolizzati.
+        const exceptions = [
+            'Don', 'Padre', 'Suor', 'Monsignor', 'Papa', 'Signore', 'Signora',
+            'Roma', 'Milano', 'Napoli', 'Torino', 'Firenze', 'Genova', 'Bologna',
+            'Venezia', 'Palermo', 'Catania', 'Bari', 'Verona', 'Padova',
+            'Italia', 'Europa', 'Vaticano',
+            'Dio', 'Gesù', 'Maria', 'Cristo', 'Chiesa', 'Eugenio'
+        ];
 
         if (senderName) {
             const nameParts = senderName.split(/\s+/);
