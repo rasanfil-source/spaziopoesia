@@ -212,6 +212,17 @@ class GeminiRateLimiter {
   }
 
   /**
+   * Aggiorna la cache locale leggendo dalle Properties.
+   * Necessario per garantire dati freschi sotto lock.
+   */
+  _refreshCache() {
+    this.allProps = this.props.getProperties() || {};
+    this.cache.rpmWindow = this._safeParseJson(this.allProps['rpm_window'], []);
+    this.cache.tpmWindow = this._safeParseJson(this.allProps['tpm_window'], []);
+    this.cache.lastCacheUpdate = Date.now();
+  }
+
+  /**
    * Ottieni data in formato italiano (per logging user-friendly)
    */
   _getItalianDate() {

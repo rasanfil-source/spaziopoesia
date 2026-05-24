@@ -9,8 +9,8 @@ const CONFIG = {
   MODEL_NAME: 'gemini-3.5-flash',
 
   // === Generazione ===
-  // NOTA: temperature rimossa per Gemini 3.5+ (non raccomandato). Si usa THINKING_LEVEL.
-  THINKING_LEVEL: 'high',
+  // Ripristinata temperature per compatibilità API (il parametro thinking_level causava errore 400).
+  TEMPERATURE: 0.7,
   MAX_OUTPUT_TOKENS: 6000,
 
   // === Validazione ===
@@ -223,7 +223,8 @@ function validateConfig() {
   // 2. Validazione Tipi e Valori Logici
   // API & Gen
   checkType('MODEL_NAME', CONFIG.MODEL_NAME, 'string');
-  checkType('THINKING_LEVEL', CONFIG.THINKING_LEVEL, 'string');
+  checkType('TEMPERATURE', CONFIG.TEMPERATURE, 'number');
+  checkRange('TEMPERATURE', CONFIG.TEMPERATURE, 0.0, 1.0);
   checkType('MAX_OUTPUT_TOKENS', CONFIG.MAX_OUTPUT_TOKENS, 'number');
 
   // Gmail & Process

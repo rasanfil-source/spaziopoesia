@@ -136,8 +136,8 @@ class GeminiService {
     // Usa chiave override se fornita, altrimenti chiave primaria
     const activeKey = apiKeyOverride || this.primaryKey;
     const url = this._buildGenerateUrl(modelName);
+    const temperature = this.config.TEMPERATURE || 0.7;
     const maxTokens = this.config.MAX_OUTPUT_TOKENS || 6000;
-    const thinkingLevel = this.config.THINKING_LEVEL || 'medium';
 
     console.log(`\uD83E\uDD16 Chiamata ${modelName} (prompt: ${prompt.length} caratteri)...`);
 
@@ -166,7 +166,7 @@ class GeminiService {
         payload: JSON.stringify({
           contents: [{ role: 'user', parts: requestParts }],
           generationConfig: {
-            thinking_level: thinkingLevel,
+            temperature: temperature,
             maxOutputTokens: maxTokens
           }
         }),
@@ -327,7 +327,7 @@ class GeminiService {
       cachedContent: cachedName,
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       generationConfig: {
-        thinking_level: this.config.THINKING_LEVEL || 'medium',
+        temperature: this.config.TEMPERATURE || 0.7,
         maxOutputTokens: this.config.MAX_OUTPUT_TOKENS || 6000
       }
     };
