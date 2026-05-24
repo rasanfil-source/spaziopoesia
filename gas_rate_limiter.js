@@ -28,9 +28,9 @@ class GeminiRateLimiter {
       // Fallback se CONFIG non disponibile
       console.warn('   \u26A0\uFE0F CONFIG.GEMINI_MODELS non trovato, uso default');
       this.models = {
-        'flash-3.1-lite': {
-          name: 'gemini-3.1-flash-lite',
-          rpm: 2000, tpm: 2000000, rpd: 3500,
+        'flash-3.5': {
+          name: 'gemini-3.5-flash',
+          rpm: 15, tpm: 1000000, rpd: 1500,
           useCases: ['generation', 'all']
         },
         'flash-lite': {
@@ -48,15 +48,15 @@ class GeminiRateLimiter {
     } else {
       // Fallback default
       this.strategies = {
-        'quick_check': ['flash-lite', 'flash-2.5'],
+        'quick_check': ['flash-lite', 'flash-3.5'],
         // Per generation evitiamo loop sul solo "lite" e usiamo fallback premium-safe.
-        'generation': ['flash-2.5', 'flash-lite', 'flash-2.5-lite-backup'],
-        'fallback': ['flash-lite', 'flash-2.5-lite-backup', 'flash-2.5']
+        'generation': ['flash-3.5', 'flash-lite'],
+        'fallback': ['flash-lite', 'flash-3.5']
       };
     }
 
     // Modello di default (primo nella lista generation)
-    this.defaultModel = Object.keys(this.models)[0] || 'flash-2.5';
+    this.defaultModel = Object.keys(this.models)[0] || 'flash-3.5';
 
     // ================================================================
     // CACHE IN-MEMORY (Session-based)
@@ -132,8 +132,8 @@ class GeminiRateLimiter {
    */
   _normalizeDeprecatedModelNames(models) {
     const deprecatedMap = {
-      // Mappatura modelli ritirati verso lo standard 3.1 Lite.
-      // Il modello 2.5 Flash standard viene mantenuto come da richiesta utente.
+      // Mappatura modelli ritirati verso i modelli 3.x configurati.
+      'gemini-2.5-flash': 'gemini-3.5-flash',
       'gemini-2.5-flash-lite': 'gemini-3.1-flash-lite',
       'gemini-2.5-flash-exp': 'gemini-3.1-flash-lite',
       'gemini-2.0-flash-exp': 'gemini-3.1-flash-lite',
@@ -265,10 +265,10 @@ class GeminiRateLimiter {
     // Aggiunge 'classification' come alias di 'quick_check' se non definito
     const taskStrategies = Object.assign({}, this.strategies);
     if (!taskStrategies['classification']) {
-      taskStrategies['classification'] = taskStrategies['quick_check'] || ['flash-lite', 'flash-2.5'];
+      taskStrategies['classification'] = taskStrategies['quick_check'] || ['flash-lite', 'flash-3.5'];
     }
 
-    const candidates = taskStrategies[taskType] || taskStrategies['fallback'] || ['flash-lite', 'flash-2.5'];
+    const candidates = taskStrategies[taskType] || taskStrategies['fallback'] || ['flash-lite', 'flash-3.5'];
 
     // Trova primo modello disponibile (Punto 11: Protezione con lock per atomicità check+use)
     const lock = LockService.getScriptLock();
@@ -327,7 +327,7 @@ class GeminiRateLimiter {
       return { available: false, reason: 'model_not_found' };
     }
 
-    // Identifica il modello fisico condiviso per aggregare i consumi (es. flash-lite e flash-3.1-lite)
+    // Identifica il modello fisico condiviso per aggregare i consumi
     const physicalModelName = model.name;
     let rpdUsed = 0;
     let rpmUsed = 0;
@@ -437,8 +437,8 @@ class GeminiRateLimiter {
       console.warn('\u23E9 RateLimiter BYPASSED (Chiave di Riserva in uso)');
       try {
         const startTime = Date.now();
-        // Esecuzione diretta senza controlli quota
-        const result = requestFn(options.modelNameOverride || 'gemini-2.5-flash');
+        // Esecuzione diretta senza controlli quota, usando la nuova baseline
+        const result = requestFn(options.modelNameOverride || 'gemini-3.5-flash');
         const duration = Date.now() - startTime;
 
         return {

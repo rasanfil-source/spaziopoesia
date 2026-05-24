@@ -6,10 +6,11 @@
 const CONFIG = {
   // === API ===
   GEMINI_API_KEY: PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY'),
-  MODEL_NAME: 'gemini-3.1-flash-lite',
+  MODEL_NAME: 'gemini-3.5-flash',
 
   // === Generazione ===
-  TEMPERATURE: 0.5,
+  // NOTA: temperature rimossa per Gemini 3.5+ (non raccomandato). Si usa THINKING_LEVEL.
+  THINKING_LEVEL: 'high',
   MAX_OUTPUT_TOKENS: 6000,
 
   // === Validazione ===
@@ -125,18 +126,11 @@ const CONFIG = {
   },
 
   GEMINI_MODELS: {
-    'flash-2.5': {
-      name: 'gemini-2.5-flash',
+    'flash-3.5': {
+      name: 'gemini-3.5-flash',
       rpm: 15,
       tpm: 1000000,
       rpd: 1500,
-      useCases: ['generation']
-    },
-    'flash-3.1-lite': {
-      name: 'gemini-3.1-flash-lite',
-      rpm: 2000,
-      tpm: 2000000,
-      rpd: 3500,
       useCases: ['generation']
     },
     'flash-lite': {
@@ -149,10 +143,10 @@ const CONFIG = {
   },
 
   MODEL_STRATEGY: {
-    'quick_check': ['flash-lite', 'flash-3.1-lite', 'flash-2.5'],
-    'generation': ['flash-2.5', 'flash-3.1-lite', 'flash-lite'],
-    'semantic': ['flash-lite', 'flash-3.1-lite', 'flash-2.5'],
-    'fallback': ['flash-lite', 'flash-3.1-lite', 'flash-2.5']
+    'quick_check': ['flash-lite', 'flash-3.5'],
+    'generation': ['flash-3.5', 'flash-lite'],
+    'semantic': ['flash-lite', 'flash-3.5'],
+    'fallback': ['flash-lite', 'flash-3.5']
   },
 
   // === Liste di esclusione ===
@@ -229,8 +223,7 @@ function validateConfig() {
   // 2. Validazione Tipi e Valori Logici
   // API & Gen
   checkType('MODEL_NAME', CONFIG.MODEL_NAME, 'string');
-  checkType('TEMPERATURE', CONFIG.TEMPERATURE, 'number');
-  checkRange('TEMPERATURE', CONFIG.TEMPERATURE, 0.0, 1.0);
+  checkType('THINKING_LEVEL', CONFIG.THINKING_LEVEL, 'string');
   checkType('MAX_OUTPUT_TOKENS', CONFIG.MAX_OUTPUT_TOKENS, 'number');
 
   // Gmail & Process

@@ -760,10 +760,10 @@ class EmailProcessor {
       // ====================================================================================================
       // NOTA ARCHITETTURALE:
       // Questa fase può richiedere più tempo del normale (fino a 4 tentativi API).
-      // SCELTA DELIBERATA: Privilegiamo la qualità della risposta (Modello Flash 2.5)
+      // SCELTA DELIBERATA: Privilegiamo la qualità della risposta (Modello Flash 3.5)
       // rispetto alla velocità. 
-      // 1. Proviamo Flash 2.5 sulla chiave primaria.
-      // 2. Se fallisce, proviamo Flash 2.5 sulla chiave di RISERVA.
+      // 1. Proviamo Flash 3.5 sulla chiave primaria.
+      // 2. Se fallisce, proviamo Flash 3.5 sulla chiave di RISERVA.
       // 3. Solo se entrambe falliscono, degradiamo al modello Lite (più economico).
       // Questo "costo" in termini di tempo è gestito riducendo MAX_EMAILS_PER_RUN a 3.
       // ====================================================================================================
@@ -785,12 +785,12 @@ class EmailProcessor {
 
       // Definizione strategie di generazione (Punti di robustezza cross-key)
       const geminiModels = (typeof CONFIG !== 'undefined' && CONFIG.GEMINI_MODELS) ? CONFIG.GEMINI_MODELS : {};
-      const flashModel = (geminiModels['flash-2.5'] && geminiModels['flash-2.5'].name) ? geminiModels['flash-2.5'].name : 'gemini-2.5-flash';
-      const liteModel = (geminiModels['flash-lite'] && geminiModels['flash-lite'].name) ? geminiModels['flash-lite'].name : 'gemini-2.5-flash-lite';
+      const flashModel = (geminiModels['flash-3.5'] && geminiModels['flash-3.5'].name) ? geminiModels['flash-3.5'].name : 'gemini-3.5-flash';
+      const liteModel = (geminiModels['flash-lite'] && geminiModels['flash-lite'].name) ? geminiModels['flash-lite'].name : 'gemini-3.1-flash-lite';
 
       const attemptStrategy = [
-        { name: 'Primary-Flash2.5', key: this.geminiService.primaryKey, model: flashModel, skipRateLimit: false },
-        { name: 'Backup-Flash2.5', key: this.geminiService.backupKey, model: flashModel, skipRateLimit: true },
+        { name: 'Primary-Flash3.5', key: this.geminiService.primaryKey, model: flashModel, skipRateLimit: false },
+        { name: 'Backup-Flash3.5', key: this.geminiService.backupKey, model: flashModel, skipRateLimit: true },
         { name: 'Fallback-Lite', key: this.geminiService.backupKey || this.geminiService.primaryKey, model: liteModel, skipRateLimit: true }
       ];
 
