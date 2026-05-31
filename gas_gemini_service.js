@@ -390,7 +390,7 @@ COMPITI:
  - FALSE solo se è newsletter, spam, messaggi di sistema, log di errore.
  - FALSE solo se è un BREVISSIMO ringraziamento finale di chiusura (es: "Grazie mille e arrivederci", "Ok ricevuto") senza altro contenuto.
 
-2. Rileva la lingua (language) - codice ISO 639-1 (es: "it", "en", "es", "fr", "de")
+2. Rileva la lingua (language) - codice ISO 639-1 (es: "it", "en", "es", "fr", "de", "la" per latino)
 3. Classifica la richiesta (category):
    - "TECHNICAL": orari, documenti, info pratiche, iscrizioni
    - "PASTORAL": richieste di aiuto, situazioni personali, lutto
@@ -720,6 +720,14 @@ Output JSON:
       ' on ', ' of ', ' to ', ' from ', ' for ', ' with ', ' at ', ' by '
     ];
 
+    const latinKeywords = [
+      'angelus', 'adstat', 'humilis', 'audit', 'verbum', 'caro', 'factum',
+      'magnas gratias', 'tibi', 'agimus', 'hoc', 'pulcherrimo', 'textu',
+      'poetico', 'versus', 'diem', 'faustum', 'exoptamus', 'dominus',
+      'domine', 'sanctus', 'sancti', 'sanctae', 'maria', 'gratia', 'pax',
+      'salve', 'ave', 'vale', 'carmina', 'poemata', 'poeta'
+    ];
+
     const spanishKeywords = [
       'he ido', 'había', 'hay', 'ido', 'sido',
       'hacer', 'haber', 'poder', 'estar', 'estoy', 'están',
@@ -784,7 +792,8 @@ Output JSON:
       'en': englishScore,
       'es': spanishLexicalScore + Math.min(spanishCharScore, 2),
       'it': countMatches(italianKeywords, text, 1),
-      'pt': ptUniqueScore + ptStandardScore + Math.min(portugueseCharScore, 2)
+      'pt': ptUniqueScore + ptStandardScore + Math.min(portugueseCharScore, 2),
+      'la': countMatches(latinKeywords, text, 2)
     };
 
     // Disambiguazione ES/PT su testi brevi: evita confusione quando i punteggi sono quasi pari.
@@ -799,12 +808,12 @@ Output JSON:
       }
     }
 
-    console.log(`   Punteggi lingua: EN = ${scores['en']}, ES = ${scores['es']}, PT = ${scores['pt']}, IT = ${scores['it']}`);
+    console.log(`   Punteggi lingua: EN = ${scores['en']}, ES = ${scores['es']}, PT = ${scores['pt']}, IT = ${scores['it']}, LA = ${scores['la']}`);
 
     // Determina lingua rilevata e punteggio massimo
     let detectedLang = 'it';
     let maxScore = scores.it || 0;
-    const langPriority = ['it', 'en', 'pt', 'es'];
+    const langPriority = ['it', 'la', 'en', 'pt', 'es'];
     for (const lang of langPriority) {
       if (scores[lang] > maxScore) {
         maxScore = scores[lang];
@@ -872,7 +881,7 @@ Output JSON:
 
     // 2. Lingue "esotiche": Se Gemini rileva qualcosa che NON è IT/EN/ES/PT, 
     // ci fidiamo di Gemini prima del locale (che è ottimizzato solo per quelle 4).
-    const supportedLocally = ['it', 'en', 'es', 'pt'];
+    const supportedLocally = ['it', 'en', 'es', 'pt', 'la'];
     if (!supportedLocally.includes(normalizedGemini)) {
       console.log(`   \uD83C\uDF0D Lingua: ${normalizedGemini.toUpperCase()} (Gemini ha rilevato lingua non supportata localmente)`);
       return normalizedGemini;
@@ -938,6 +947,18 @@ Output JSON:
         } else {
           greeting = 'Buonasera.';
         }
+      } else if (language === 'la') {
+        if (isNightTime) {
+          greeting = `Salve ${senderName},`;
+        } else if (day === 0) {
+          greeting = 'Felix dies Dominica,';
+        } else if (hour >= 5 && hour < 12) {
+          greeting = 'Salve,';
+        } else if (hour >= 12 && hour < 18) {
+          greeting = 'Salve,';
+        } else {
+          greeting = 'Salve,';
+        }
       } else if (language === 'en') {
         if (isNightTime) {
           greeting = 'Good day,';
@@ -981,6 +1002,8 @@ Output JSON:
     // Chiusura in base alla lingua
     if (language === 'it') {
       closing = 'Cordiali saluti,';
+    } else if (language === 'la') {
+      closing = 'Cordialiter,';
     } else if (language === 'en') {
       closing = 'Kind regards,';
     } else if (language === 'es') {
@@ -1010,6 +1033,7 @@ Output JSON:
 
     // Capodanno
     if (m === 1 && d === 1) {
+      if (language === 'la') return 'Faustum annum novum!';
       if (language === 'en') return 'Happy New Year!';
       if (language === 'es') return '¡Feliz Año Nuevo!';
       if (language === 'pt') return 'Feliz Ano Novo!';
@@ -1018,6 +1042,7 @@ Output JSON:
 
     // Epifania
     if (m === 1 && d === 6) {
+      if (language === 'la') return 'Felix Epiphania!';
       if (language === 'en') return 'Happy Epiphany!';
       if (language === 'es') return '¡Feliz Epifanía!';
       if (language === 'pt') return 'Feliz Epifania!';
@@ -1026,6 +1051,7 @@ Output JSON:
 
     // Assunzione (15 Agosto)
     if (m === 8 && d === 15) {
+      if (language === 'la') return 'Felix dies Assumptionis!';
       if (language === 'en') return 'Happy Assumption Day!';
       if (language === 'es') return '¡Feliz día de la Asunción!';
       if (language === 'pt') return 'Feliz dia da Assunção!';
@@ -1034,6 +1060,7 @@ Output JSON:
 
     // Tutti i Santi (1 Novembre)
     if (m === 11 && d === 1) {
+      if (language === 'la') return 'Felix dies Omnium Sanctorum!';
       if (language === 'en') return 'Happy All Saints Day!';
       if (language === 'es') return '¡Feliz día de Todos los Santos!';
       if (language === 'pt') return 'Feliz Dia de Todos os Santos!';
@@ -1042,6 +1069,7 @@ Output JSON:
 
     // Immacolata Concezione (8 Dicembre)
     if (m === 12 && d === 8) {
+      if (language === 'la') return 'Felix sollemnitas Immaculatae Conceptionis!';
       if (language === 'en') return 'Happy Feast of the Immaculate Conception!';
       if (language === 'es') return '¡Feliz día de la Inmaculada!';
       if (language === 'pt') return 'Feliz Imaculada Conceição!';
@@ -1050,6 +1078,7 @@ Output JSON:
 
     // Natale (25 Dicembre)
     if (m === 12 && d === 25) {
+      if (language === 'la') return 'Felix Nativitas!';
       if (language === 'en') return 'Merry Christmas!';
       if (language === 'es') return '¡Feliz Navidad!';
       if (language === 'pt') return 'Feliz Natal!';
@@ -1064,6 +1093,7 @@ Output JSON:
     const pasquaStart = easter;
     const pasquaEnd = this._addDays(easter, 7);
     if (this._isBetweenInclusive(dateObj, pasquaStart, pasquaEnd)) {
+      if (language === 'la') return 'Felix Pascha!';
       if (language === 'en') return 'Happy Easter!';
       if (language === 'es') return '¡Feliz Pascua!';
       if (language === 'pt') return 'Feliz Páscoa!';
@@ -1073,6 +1103,7 @@ Output JSON:
     // Pentecoste (Pasqua + 49 giorni)
     const pentecoste = this._addDays(easter, 49);
     if (this._isSameDate(dateObj, pentecoste)) {
+      if (language === 'la') return 'Felix Pentecoste!';
       if (language === 'en') return 'Happy Pentecost!';
       if (language === 'es') return '¡Feliz Pentecostés!';
       if (language === 'pt') return 'Feliz Pentecostes!';
@@ -1082,6 +1113,7 @@ Output JSON:
     // Corpus Domini (Pasqua + 63 giorni in Italia)
     const corpusDominiIT = this._addDays(easter, 63);
     if (this._isSameDate(dateObj, corpusDominiIT)) {
+      if (language === 'la') return 'Felix Corpus Christi!';
       if (language === 'en') return 'Happy Corpus Christi!';
       if (language === 'es') return '¡Feliz Corpus Christi!';
       if (language === 'pt') return 'Feliz Corpus Christi!';
@@ -1091,6 +1123,7 @@ Output JSON:
     // Domenica della Sacra Famiglia
     const sacraFamiglia = this._getHolyFamilySunday(y);
     if (sacraFamiglia && this._isSameDate(dateObj, sacraFamiglia)) {
+      if (language === 'la') return 'Felix festum Sanctae Familiae!';
       if (language === 'en') return 'Happy Feast of the Holy Family!';
       if (language === 'es') return '¡Feliz Fiesta de la Sagrada Familia!';
       if (language === 'pt') return 'Feliz Festa da Sagrada Família!';

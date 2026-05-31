@@ -39,6 +39,7 @@ if (typeof process !== 'undefined' && typeof require !== 'undefined') {
         var propsData = new Map();
         global.PropertiesService = {
             getScriptProperties: () => ({
+                getProperties: () => Object.fromEntries(propsData),
                 getProperty: (k) => {
                     if (propsData.has(k)) return propsData.get(k);
                     if (k === 'GEMINI_API_KEY') return 'abcdefghijklmnopqrstuvwxyz123456';
@@ -46,6 +47,7 @@ if (typeof process !== 'undefined' && typeof require !== 'undefined') {
                     return null;
                 },
                 setProperty: (k, v) => propsData.set(k, String(v)),
+                setProperties: (obj) => Object.keys(obj || {}).forEach(k => propsData.set(k, String(obj[k]))),
                 deleteProperty: (k) => propsData.delete(k)
             })
         };
@@ -120,7 +122,7 @@ if (typeof process !== 'undefined' && typeof require !== 'undefined') {
 
     // Caricamento script core
     [
-        'gas_config.example.js',
+        'gas_config.js',
         'gas_error_types.js',
         'gas_rate_limiter.js',
         'gas_memory_service.js',
@@ -183,7 +185,7 @@ function runAllTests() {
     testGroup('Punto #1: RateLimiter - WAL Protection', results, () => {
         test('WAL persist elimini log se riuscito', results, () => {
             const limiter = new GeminiRateLimiter();
-            limiter._persistCacheWithWAL();
+            limiter.flush();
             return limiter.props.getProperty('rate_limit_wal') === null;
         });
         test('WAL recovery ripristini finestre', results, () => {
@@ -220,6 +222,14 @@ function runAllTests() {
         const service = new GeminiService();
         test('Rilevamento IT', results, () => service.detectEmailLanguage("Buongiorno").lang === 'it');
         test('Rilevamento PT', results, () => service.detectEmailLanguage("Bom dia").lang === 'pt');
+        test('Rilevamento LA per versi latini', results, () => {
+            const latinText = "Angelus adstat,\nMaria humilis audit,\nVerbum fit caro.\n\nCaro Lucretius";
+            return service.detectEmailLanguage(latinText).lang === 'la';
+        });
+        test('Saluto adattivo LA non usa inglese', results, () => {
+            const greeting = service.getAdaptiveGreeting('Lucretius', 'la');
+            return !/Good|Kind regards/i.test(`${greeting.greeting} ${greeting.closing}`);
+        });
     });
 
     // 5. ResponseValidator

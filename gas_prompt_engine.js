@@ -466,6 +466,25 @@ Rispondi SOLO alla domanda. Aggiungi dettagli extra SOLO se strettamente correla
 
     const instructions = {
       'it': "Rispondi in italiano, la lingua dell'email ricevuta.",
+      'la': `══════════════════════════════════════════════════════
+🚨🚨🚨 REQUISITUM LINGUAE CRITICUM - LATINE 🚨🚨🚨
+══════════════════════════════════════════════════════
+
+Epistula accepta Latine scripta est.
+
+Oportet:
+✅ Totam responsionem Latine scribere
+✅ Salutem Latinam adhibere: "Salve," vel "Felix dies Dominica,"
+✅ Clausulas et formulas finales Latine reddere
+✅ Sermonem formalem, urbanum et ecclesialem servare
+✅ Notitias Italicas Latine transferre
+
+Non licet:
+❌ Verba Anglica adhibere (nullum "Good day", "Kind regards")
+❌ Linguas miscere
+
+Hoc est OBLIGATORIUM: si corpus Latine est, salutatio quoque Latine esse debet.
+══════════════════════════════════════════════════════`,
       'en': `══════════════════════════════════════════════════════
 🚨🚨🚨 CRITICAL LANGUAGE REQUIREMENT - ENGLISH 🚨🚨🚨
 ══════════════════════════════════════════════════════
@@ -1049,7 +1068,46 @@ Il comitato "Uno spazio per la poesia"
     let contentSection;
     let languageReminder;
 
-    if (lang === 'en') {
+    if (lang === 'la') {
+      const infoLink = "In memoriam revocamus carmina selecta singulis hebdomadibus ad portas Basilicae et in pagina interretiali huic rei dicata publicari: bit.ly/spaziopoesia.";
+      const waitingTerm = hasContributed ? "adhuc alios versus Tuos" : "versus Tuos";
+      const closingPhrase = `Dum exspectamus ut ${waitingTerm} admirari possimus, diem Tibi faustum exoptamus.`;
+
+      if (category === 'parish_info_request') {
+        closingStatement = "Praesto manemus ad quamlibet informationem vel auxilium de hac incepta praebendum.";
+      } else if (hasPoem) {
+        closingStatement = `${infoLink}
+
+${closingPhrase}`;
+      } else {
+        closingStatement = hasContributed ? closingPhrase : `${infoLink}
+
+${closingPhrase}`;
+      }
+
+      formatSection = `1. **SALUTATIO OBLIGATORIA:**
+   • Responsionem incipe EXACTE hoc saluto: "${salutation}"
+   • Noli hanc salutationem in Anglicam vel Italicam mutare.
+
+2. **Forma responsionis (LATINE REQUIRITUR):**
+   ${salutation}
+   [Corpus breve et pertinens - ✅ NO TRAILING NEWLINES]
+   ${closingStatement}
+   Secretaria incepti "Uno spazio per la poesia"
+   Paroecia Sancti Eugenii, Romae`;
+
+      contentSection = `3. **Argumentum:**
+   • Responde SOLUM ad id quod rogatur
+   • Utere SOLUM informationibus e basi cognitionis vel carmina adnexa considera, si adsunt
+   • ✅ Dispone eleganter si 3+ elementa/hora adsunt
+   • Responsio sequens (Re:): brevior et directior sit`;
+
+      languageReminder = `4. **LINGUA: ⚠️ RESPONDE LATINE TANTUM**
+   • Nulla verba Anglica admittuntur, praesertim in salutatione
+   • Utere Latina lingua in salutatione, corpore et clausulis
+   • Si firma institutionis Italice servanda est, cetera omnia Latine maneant`;
+
+    } else if (lang === 'en') {
       if (category === 'parish_info_request') {
         closingStatement = "We remain available for any information or assistance regarding this initiative.";
       } else if (hasPoem) {

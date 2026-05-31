@@ -49,7 +49,8 @@ class ResponseValidator {
       'es': ['gracias', 'saludos', 'estimado', 'poesía', 'concurso', 'poema', 'querría'],
       'fr': ['merci', 'cordialement', 'cher', 'poésie', 'concours', 'poème', 'voudrais'],
       'de': ['danke', 'grüße', 'liebe', 'poesie', 'wettbewerb', 'gedicht', 'möchte'],
-      'pt': ['obrigado', 'obrigada', 'cumprimentos', 'poesia', 'concurso', 'poema', 'orçamento']
+      'pt': ['obrigado', 'obrigada', 'cumprimentos', 'poesia', 'concurso', 'poema', 'orçamento'],
+      'la': ['gratias', 'salve', 'ave', 'vale', 'carmina', 'versus', 'poemata', 'verbum', 'maria', 'tibi']
     };
 
     // Placeholder da rilevare

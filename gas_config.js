@@ -180,6 +180,7 @@ const LANGUAGE_MARKERS = {
   'en': ['thank', 'regards', 'dear', 'poetry', 'contest', 'verses', 'poem', 'could', 'please', 'sincerely'],
   'es': ['gracias', 'saludos', 'estimado', 'poesía', 'concurso', 'versos', 'poema', 'buenos', 'días'],
   'pt': ['obrigado', 'obrigada', 'atenciosamente', 'prezado', 'poesia', 'concurso', 'versos', 'bom', 'dia', 'tarde'],
+  'la': ['gratias', 'salve', 'ave', 'vale', 'carmina', 'versus', 'poemata', 'verbum', 'maria', 'tibi'],
   'fr': ['merci', 'cordialement', 'cher', 'poésie', 'concours', 'vers', 'poème', 'bonjour', 'bonsoir'],
   'de': ['danke', 'grüße', 'liebe', 'poesie', 'wettbewerb', 'verse', 'gedicht', 'guten', 'tag']
 };
