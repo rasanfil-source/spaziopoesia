@@ -24,19 +24,28 @@ class GeminiRateLimiter {
     if (typeof CONFIG !== 'undefined' && CONFIG.GEMINI_MODELS) {
       this.models = this._normalizeDeprecatedModelNames(CONFIG.GEMINI_MODELS);
       console.log('   \u2713 Modelli caricati da CONFIG.GEMINI_MODELS');
-    } else {
-      // Fallback se CONFIG non disponibile
+    } else {      // Fallback se CONFIG non disponibile
       console.warn('   \u26A0\uFE0F CONFIG.GEMINI_MODELS non trovato, uso default');
       this.models = {
-        'flash-3.5': {
-          name: 'gemini-3.5-flash',
-          rpm: 15, tpm: 1000000, rpd: 1500,
+        'flash-3.7': {
+          name: 'gemini-3.7-flash',
+          rpm: 10, tpm: 250000, rpd: 1500,
           useCases: ['generation', 'all']
+        },
+        'flash-3.7-backup': {
+          name: 'gemini-3.7-flash',
+          rpm: 10, tpm: 250000, rpd: 1500,
+          useCases: ['generation', 'backup']
         },
         'flash-lite': {
           name: 'gemini-3.1-flash-lite',
-          rpm: 2000, tpm: 2000000, rpd: 3500,
+          rpm: 15, tpm: 250000, rpd: 1000,
           useCases: ['fallback', 'classification', 'quick_check']
+        },
+        'flash-lite-backup': {
+          name: 'gemini-3.1-flash-lite',
+          rpm: 15, tpm: 250000, rpd: 1000,
+          useCases: ['fallback', 'classification', 'quick_check', 'backup']
         }
       };
     }
@@ -48,15 +57,16 @@ class GeminiRateLimiter {
     } else {
       // Fallback default
       this.strategies = {
-        'quick_check': ['flash-lite', 'flash-3.5'],
-        // Per generation evitiamo loop sul solo "lite" e usiamo fallback premium-safe.
-        'generation': ['flash-3.5', 'flash-lite'],
-        'fallback': ['flash-lite', 'flash-3.5']
+        'quick_check': ['flash-lite'],
+        'classification': ['flash-lite'],
+        'generation': ['flash-3.7', 'flash-3.7-backup', 'flash-lite', 'flash-lite-backup'],
+        'semantic': ['flash-lite', 'flash-lite-backup'],
+        'fallback': ['flash-lite', 'flash-lite-backup']
       };
     }
 
     // Modello di default (primo nella lista generation)
-    this.defaultModel = Object.keys(this.models)[0] || 'flash-3.5';
+    this.defaultModel = Object.keys(this.models)[0] || 'flash-3.7';
 
     // ================================================================
     // CACHE IN-MEMORY (Session-based)
@@ -133,7 +143,9 @@ class GeminiRateLimiter {
   _normalizeDeprecatedModelNames(models) {
     const deprecatedMap = {
       // Mappatura modelli ritirati verso i modelli 3.x configurati.
-      'gemini-2.5-flash': 'gemini-3.5-flash',
+      'gemini-3.6-flash': 'gemini-3.7-flash',
+      'gemini-3.5-flash': 'gemini-3.7-flash',
+      'gemini-2.5-flash': 'gemini-3.7-flash',
       'gemini-2.5-flash-lite': 'gemini-3.1-flash-lite',
       'gemini-2.5-flash-exp': 'gemini-3.1-flash-lite',
       'gemini-2.0-flash-exp': 'gemini-3.1-flash-lite',
@@ -276,10 +288,10 @@ class GeminiRateLimiter {
     // Aggiunge 'classification' come alias di 'quick_check' se non definito
     const taskStrategies = Object.assign({}, this.strategies);
     if (!taskStrategies['classification']) {
-      taskStrategies['classification'] = taskStrategies['quick_check'] || ['flash-lite', 'flash-3.5'];
+      taskStrategies['classification'] = taskStrategies['quick_check'] || ['flash-lite', 'flash-3.7'];
     }
 
-    const candidates = taskStrategies[taskType] || taskStrategies['fallback'] || ['flash-lite', 'flash-3.5'];
+    const candidates = taskStrategies[taskType] || taskStrategies['fallback'] || ['flash-lite', 'flash-3.7'];
 
     // Trova primo modello disponibile (Punto 11: Protezione con lock per atomicità check+use)
     const lock = LockService.getScriptLock();
@@ -354,7 +366,6 @@ class GeminiRateLimiter {
 
     // Controllo RPD
     const rpdLeft = model.rpd - rpdUsed;
-
     if (rpdLeft <= 0) {
       return {
         available: false,
@@ -449,7 +460,7 @@ class GeminiRateLimiter {
       try {
         const startTime = Date.now();
         // Esecuzione diretta senza controlli quota, usando la nuova baseline
-        const result = requestFn(options.modelNameOverride || 'gemini-3.5-flash');
+        const result = requestFn(options.modelNameOverride || 'gemini-3.7-flash');
         const duration = Date.now() - startTime;
 
         return {

@@ -39,7 +39,7 @@ class GeminiService {
     // Alias accessibile per i moduli che usano la proprietà apiKey
     this.apiKey = this.primaryKey;
 
-    this.modelName = this.config.MODEL_NAME || 'gemini-3.5-flash';
+    this.modelName = this.config.MODEL_NAME || 'gemini-3.7-flash';
     this.baseUrl = this._buildGenerateUrl(this.modelName);
 
     if (!this.primaryKey || this.primaryKey.length < 20 || /YOUR_[A-Z0-9_]+_HERE/.test(this.primaryKey)) {
@@ -127,7 +127,7 @@ class GeminiService {
   /**
    * Genera risposta con modello specifico
    * @param {string} prompt - Prompt completo
-   * @param {string} modelName - Nome modello API (es. 'gemini-3.5-flash')
+   * @param {string} modelName - Nome modello API (es. 'gemini-3.7-flash')
    * @param {string} apiKeyOverride - Chiave API opzionale (per strategia multi-key)
    * @param {Array<Blob>} attachments - Array di Blob (immagini/PDF) da inviare
    * @returns {string|null} Testo generato

@@ -6,7 +6,7 @@
 const CONFIG = {
   // === API ===
   GEMINI_API_KEY: PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY'),
-  MODEL_NAME: 'gemini-3.5-flash',
+  MODEL_NAME: 'gemini-3.7-flash',
 
   // === Generazione ===
   // Ripristinata temperature per compatibilità API (il parametro thinking_level causava errore 400).
@@ -26,13 +26,30 @@ const CONFIG = {
     maxRetries: 1,
     fallbackOnError: true
   },
+  // === Riprova Intelligente Post-Validazione ===
+  INTELLIGENT_RETRY: {
+    enabled: true,           // Abilita retry LLM su errori strutturali
+    maxRetries: 1,           // Limite di esecuzione per sessione GAS
+    minScoreToTrigger: 0.6,  // Soglia minima score per considerare retry non critici
+    onlyForErrors: [         // Tipi di errore che giustificano una chiamata LLM
+      'thinking_leak',
+      'hallucination',
+      'kb_relevance',
+      'language',
+      'placeholder',
+      'length',
+      'temporal',
+      'physical_presence',
+      'sensitive_quality'
+    ]
+  },
 
   // === Gmail ===
   LABEL_NAME: 'IA',                    // Label per email processate
   ERROR_LABEL_NAME: 'Errore',          // Label per errori
   VALIDATION_ERROR_LABEL: 'Verifica',  // Label per risposte da rivedere
-  // Configurazione dei limiti operativi per garantire stabilità e rispetto delle quote (RPD 3.500).
-  MAX_EMAILS_PER_RUN: 3,
+  // Configurazione dei limiti operativi per garantire stabilità e rispetto delle quote.
+  MAX_EMAILS_PER_RUN: 2,
   SAFETY_VALVE_THRESHOLD: 0.8,       // Regolazione batch in base al carico operativo RPD
   MAX_CONSECUTIVE_EXTERNAL: 5,        // Soglia per rilevamento email loop
   EMPTY_INBOX_WARNING_THRESHOLD: 5,   // Soglia per warning inbox vuota
@@ -105,12 +122,12 @@ const CONFIG = {
   METRICS_SHEET_NAME: 'DailyMetrics',
 
   // === Modelli Gemini (configurazione centralizzata) ===
-  // Aggiornato: Maggio 2026 - Gemini 3.1 Flash-Lite Free Tier
+  // Aggiornato: Gemini 3.7 Flash Free Tier
   GEMINI_FREE_TIER_NOTES: {
     contextWindowTokens: 1048576,
-    rpm: 2000,
-    tpm: 2000000,
-    rpd: 3500,
+    rpm: 10,
+    tpm: 250000,
+    rpd: 1500,
     groundingSharedRpd: 1500,
     countTokensApiAllowed: false,
     contextCachingSupported: true
@@ -126,27 +143,46 @@ const CONFIG = {
   },
 
   GEMINI_MODELS: {
-    'flash-3.5': {
-      name: 'gemini-3.5-flash',
-      rpm: 15,
-      tpm: 1000000,
+    'flash-3.7': {
+      name: 'gemini-3.7-flash',
+      rpm: 10,
+      tpm: 250000,
       rpd: 1500,
-      useCases: ['generation']
+      contextWindowTokens: 1048576,
+      useCases: ['generation', 'all']
+    },
+    'flash-3.7-backup': {
+      name: 'gemini-3.7-flash',
+      rpm: 10,
+      tpm: 250000,
+      rpd: 1500,
+      contextWindowTokens: 1048576,
+      useCases: ['generation', 'backup']
     },
     'flash-lite': {
       name: 'gemini-3.1-flash-lite',
-      rpm: 2000,
-      tpm: 2000000,
-      rpd: 3500,
+      rpm: 15,
+      tpm: 250000,
+      rpd: 1000,
+      contextWindowTokens: 1048576,
       useCases: ['quick_check', 'classification', 'semantic', 'fallback']
+    },
+    'flash-lite-backup': {
+      name: 'gemini-3.1-flash-lite',
+      rpm: 15,
+      tpm: 250000,
+      rpd: 1000,
+      contextWindowTokens: 1048576,
+      useCases: ['quick_check', 'classification', 'semantic', 'fallback', 'backup']
     }
   },
 
   MODEL_STRATEGY: {
-    'quick_check': ['flash-lite', 'flash-3.5'],
-    'generation': ['flash-3.5', 'flash-lite'],
-    'semantic': ['flash-lite', 'flash-3.5'],
-    'fallback': ['flash-lite', 'flash-3.5']
+    'quick_check': ['flash-lite'],
+    'classification': ['flash-lite'],
+    'generation': ['flash-3.7', 'flash-3.7-backup', 'flash-lite', 'flash-lite-backup'],
+    'semantic': ['flash-lite', 'flash-lite-backup'],
+    'fallback': ['flash-lite', 'flash-lite-backup']
   },
 
   // === Liste di esclusione ===
@@ -241,8 +277,28 @@ function validateConfig() {
   checkType('VALIDATION_MIN_SCORE', CONFIG.VALIDATION_MIN_SCORE, 'number');
   checkRange('VALIDATION_MIN_SCORE', CONFIG.VALIDATION_MIN_SCORE, 0.0, 1.0);
   
-  if (!CONFIG.GEMINI_MODELS || Object.keys(CONFIG.GEMINI_MODELS).length === 0) {
+  // 3. Validazione Modelli Gemini (fail-fast)
+  if (!CONFIG.GEMINI_MODELS || typeof CONFIG.GEMINI_MODELS !== 'object' || Object.keys(CONFIG.GEMINI_MODELS).length === 0) {
     errors.push('CRITICO: GEMINI_MODELS mancante o vuoto');
+  } else {
+    if (!CONFIG.GEMINI_MODELS['flash-3.7']) errors.push("Errore Config: Modello 'flash-3.7' mancante in GEMINI_MODELS");
+    if (!CONFIG.GEMINI_MODELS['flash-3.7-backup']) errors.push("Errore Config: Modello 'flash-3.7-backup' mancante in GEMINI_MODELS");
+    if (!CONFIG.GEMINI_MODELS['flash-lite']) errors.push("Errore Config: Modello 'flash-lite' mancante in GEMINI_MODELS");
+    if (!CONFIG.GEMINI_MODELS['flash-lite-backup']) errors.push("Errore Config: Modello 'flash-lite-backup' mancante in GEMINI_MODELS");
+  }
+
+  // 4. Validazione Strategia Modelli
+  if (!CONFIG.MODEL_STRATEGY || typeof CONFIG.MODEL_STRATEGY !== 'object') {
+    errors.push("Errore Config: 'MODEL_STRATEGY' deve essere un oggetto");
+  } else {
+    const generationStrategy = CONFIG.MODEL_STRATEGY.generation || [];
+    const quickStrategy = CONFIG.MODEL_STRATEGY.quick_check || [];
+    if (!Array.isArray(generationStrategy) || generationStrategy[0] !== 'flash-3.7') {
+      errors.push("Errore Config: MODEL_STRATEGY.generation deve partire da 'flash-3.7'");
+    }
+    if (!Array.isArray(quickStrategy) || quickStrategy[0] !== 'flash-lite') {
+      errors.push("Errore Config: MODEL_STRATEGY.quick_check deve partire da 'flash-lite'");
+    }
   }
 
   // Arrays

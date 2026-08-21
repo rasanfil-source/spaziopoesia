@@ -316,6 +316,30 @@ function runAllTests() {
         });
     });
 
+    // 9. Config Validation (Gemini 3.7 Flash)
+    testGroup('Punto #9: Config Validation - Gemini 3.7 Flash & Model Strategy', results, () => {
+        test('validateConfig() valida con successo la configurazione Gemini 3.7', results, () => {
+            const val = validateConfig();
+            if (!val.valid) {
+                console.error('Errori validateConfig:', val.errors);
+            }
+            return val.valid === true && val.errors.length === 0;
+        });
+
+        test('CONFIG.MODEL_NAME è impostato su gemini-3.7-flash', results, () => {
+            return CONFIG.MODEL_NAME === 'gemini-3.7-flash';
+        });
+
+        test('CONFIG.MODEL_STRATEGY.generation inizia con flash-3.7', results, () => {
+            return Array.isArray(CONFIG.MODEL_STRATEGY.generation) && CONFIG.MODEL_STRATEGY.generation[0] === 'flash-3.7';
+        });
+
+        test('CONFIG.GEMINI_MODELS contiene flash-3.7 con limiti corretti', results, () => {
+            const m = CONFIG.GEMINI_MODELS['flash-3.7'];
+            return m && m.name === 'gemini-3.7-flash' && m.rpm === 10 && m.tpm === 250000 && m.rpd === 1500;
+        });
+    });
+
     const duration = Date.now() - start;
     const successRate = results.total > 0 ? ((results.passed / results.total) * 100).toFixed(1) : 0;
 
