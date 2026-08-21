@@ -136,7 +136,7 @@ class EmailProcessor {
     } else {
       const configuredTtl = (typeof CONFIG !== 'undefined' && Number(CONFIG.CACHE_LOCK_TTL))
         ? Number(CONFIG.CACHE_LOCK_TTL)
-        : 240; // Fallback allineato al default config per coprire OCR + validazione semantica
+        : 360; // Fallback allineato al default config per coprire OCR + validazione semantica
 
       const ttlSeconds = configuredTtl;
       const lockTtlMs = ttlSeconds * 1000;
@@ -167,11 +167,6 @@ class EmailProcessor {
         }
 
         scriptCache.put(threadLockKey, lockValue, ttlSeconds);
-        const confirmValue = scriptCache.get(threadLockKey);
-        if (confirmValue !== lockValue) {
-          console.warn(`🔒 Collisione lock cache su thread ${threadId}, salto`);
-          return { status: 'skipped', reason: 'thread_lock_collision' };
-        }
 
         lockAcquired = true;
         console.log(`🔒 Lock acquisito per thread ${threadId}`);

@@ -76,7 +76,7 @@ const CONFIG = {
   },
 
   // === Cache e Lock ===
-  CACHE_LOCK_TTL: 240,                 // Secondi (copre OCR + AI + validazione semantica)
+  CACHE_LOCK_TTL: 360,                 // Secondi (copre OCR + AI + validazione semantica)
   CACHE_RACE_SLEEP_MS: 200,             // Attesa anti-race condition
 
   // === Alias noti (anti-loop: il bot riconosce sé stesso anche quando invia da alias) ===
