@@ -93,20 +93,6 @@ class EmailProcessor {
   }
 
   /**
-   * Classifica l'errore per determinare la strategia di retry.
-   * Gli errori non retryable (chiave invalida, risposta malformata) sono fatali.
-   * @param {Error} error
-   * @returns {{ type: string, retryable: boolean, message: string }}
-   */
-  _classifyError(error) {
-    const result = classifyError(error);
-    if (!result.retryable) {
-      result.type = 'FATAL';
-    }
-    return result;
-  }
-
-  /**
    * Elabora il singolo thread (analisi, categorizzazione, generazione risposta, invio)
    * @param {GmailThread} thread 
    * @param {string} knowledgeBase - KB testo semplice
@@ -326,7 +312,9 @@ class EmailProcessor {
 
       if (lastSpeakerIsUs) {
         console.log('   ⊖ Saltato: l\'ultimo messaggio del thread è già nostro (bot o segreteria)');
-        // Non marchiamo nulla, semplicemente ci fermiamo finché l'utente non risponde
+        // I messaggi esterni non letti precedenti sono già coperti dalla nostra ultima risposta.
+        // Etichettarli evita che il thread rientri per sempre nella query Gmail.
+        externalUnread.forEach(message => this._markMessageAsProcessed(message, labeledMessageIds));
         result.status = 'skipped';
         result.reason = 'last_speaker_is_me';
         return result;
@@ -524,6 +512,13 @@ class EmailProcessor {
         messageDetails.subject
       );
 
+      if (quickCheck.indeterminate) {
+        console.warn(`   ⚠️ Quick check indeterminato (${quickCheck.reason || 'errore sconosciuto'}): il messaggio verrà ritentato`);
+        result.status = 'error';
+        result.error = `quick_check_indeterminate: ${quickCheck.reason || 'unknown'}`;
+        return result;
+      }
+
       if (!quickCheck.shouldRespond) {
         // NUOVO: Se ci sono allegati, ignoriamo il "no respond" di Gemini Quick Check
         // perché Gemini non ha ancora visto il contenuto visivo degli allegati.
@@ -563,7 +558,7 @@ class EmailProcessor {
       const knowledgeSections = [];
 
       // KB Principale (Istruzioni dal foglio)
-      knowledgeSections.push('--- ISTRUZIONI OPERATIVE ---\\n' + knowledgeBase);
+      knowledgeSections.push('--- ISTRUZIONI OPERATIVE ---\n' + knowledgeBase);
 
       const enrichedKnowledgeBase = knowledgeSections.filter(Boolean).join('\n\n');
 
@@ -691,7 +686,10 @@ class EmailProcessor {
           let hasAttachments = false;
           try {
             const attachments = candidate.getAttachments({ includeInlineImages: true, includeAttachments: true }) || [];
-            hasAttachments = attachments.length > 0;
+            hasAttachments = attachments.some(attachment => {
+              return !(this.gmailService && typeof this.gmailService.isLikelySignatureImage === 'function' &&
+                this.gmailService.isLikelySignatureImage(attachment));
+            });
           } catch (e) {
             console.warn(`⚠️ Impossibile leggere allegati per pre-check: ${e.message}`);
           }
@@ -730,7 +728,11 @@ class EmailProcessor {
         topic: quickCheck.classification ? quickCheck.classification.topic : '',
         detectedLanguage: detectedLanguage,
         currentSeason: this._getCurrentSeason(),
-        currentDate: new Date().toISOString().split('T')[0],
+        currentDate: Utilities.formatDate(
+          new Date(),
+          (typeof Session.getScriptTimeZone === 'function' ? Session.getScriptTimeZone() : 'Europe/Rome'),
+          'yyyy-MM-dd'
+        ),
         salutation: greeting,
         closing: closing,
         subIntents: classification.subIntents || {},
@@ -946,9 +948,6 @@ class EmailProcessor {
         const errorMessage = e && e.message ? e.message : String(e);
         console.error(`   🛑 Errore invio Gmail: ${errorMessage}`);
         this._addErrorLabel(thread);
-        if (candidate) {
-          this._markMessageAsProcessed(candidate, labeledMessageIds);
-        }
         result.status = 'error';
         result.error = `gmail_send_failed: ${errorMessage}`;
         return result;
@@ -989,9 +988,8 @@ class EmailProcessor {
 
       this.memoryService.updateMemoryAtomic(threadId, memoryUpdate, topicsWithObjects.length > 0 ? topicsWithObjects : null);
 
-      if (candidate) {
-        this._markMessageAsProcessed(candidate, labeledMessageIds);
-      }
+      // La risposta copre tutti i messaggi esterni pendenti fino al candidato corrente.
+      externalUnread.forEach(message => this._markMessageAsProcessed(message, labeledMessageIds));
       result.status = 'replied';
       result.durationMs = Date.now() - startTime;
       this.logger.info(`Thread processato in ${result.durationMs}ms`, { threadId: threadId, duration: result.durationMs });
@@ -1000,9 +998,6 @@ class EmailProcessor {
     } catch (error) {
       console.error(`   🛑 Errore elaborazione thread: ${error.message}`);
       this._addErrorLabel(thread);
-      if (candidate) {
-        this._markMessageAsProcessed(candidate, labeledMessageIds);
-      }
       result.status = 'error';
       result.error = error.message;
       return result;
@@ -1058,7 +1053,7 @@ class EmailProcessor {
     }
 
     try {
-      if (knowledgeBase === null || typeof knowledgeBase === 'undefined') {
+      if (typeof knowledgeBase !== 'string' || !knowledgeBase.trim()) {
         this.logger.error('Knowledge base non disponibile: interrompo batch per evitare risposte senza contesto.');
         return { total: 0, replied: 0, filtered: 0, errors: 1, skipped: 0, reason: 'knowledge_base_missing' };
       }
@@ -1180,8 +1175,7 @@ class EmailProcessor {
           result.status === 'replied' ||
           result.status === 'error' ||
           result.status === 'validation_failed' ||
-          result.status === 'filtered' ||
-          result.status === 'skipped' // <- M3 Include ora gli skipped totali
+          result.status === 'filtered'
         );
 
         if (isEffectiveWork) {
@@ -1234,6 +1228,16 @@ class EmailProcessor {
           this.geminiService.flush();
         } catch (e) {
           console.warn(`⚠️ Errore durante flush Rate Limiter in EmailProcessor: ${e.message}`);
+        }
+      }
+      const semanticGemini = this.validator && this.validator.semanticValidator
+        ? this.validator.semanticValidator.geminiService
+        : null;
+      if (semanticGemini && typeof semanticGemini.flush === 'function') {
+        try {
+          semanticGemini.flush();
+        } catch (e) {
+          console.warn(`⚠️ Errore durante flush Rate Limiter semantico: ${e.message}`);
         }
       }
 
@@ -1313,8 +1317,15 @@ class EmailProcessor {
     if (!message) return false;
     try {
       const attachments = message.getAttachments({ includeInlineImages: true, includeAttachments: true }) || [];
-      if (attachments.length > 0) {
-        console.log('   📎 OCR attivo: allegati trovati per potenziale analisi poetica');
+      const meaningfulAttachments = attachments.filter(attachment => {
+        return !(this.gmailService && typeof this.gmailService.isLikelySignatureImage === 'function' &&
+          this.gmailService.isLikelySignatureImage(attachment));
+      });
+      if (meaningfulAttachments.length > 0) {
+        // Qualunque allegato reale può contenere testo poetico (per esempio uno
+        // screenshot di uno stato WhatsApp). Il filtro dei semplici ringraziamenti
+        // resta valido solo quando non esistono allegati da analizzare.
+        console.log('   📎 OCR attivo: rilevata almeno un\'immagine significativa o un allegato reale');
         return true;
       }
     } catch (e) {
@@ -1449,7 +1460,12 @@ class EmailProcessor {
     }
 
     // Aggiungiamo data contestuale per non collassare topic se esauditi in momenti diversi
-    const newBullet = summarySentence ? `• [${new Date().toISOString().split('T')[0]}] ${summarySentence}` : '';
+    const localDate = Utilities.formatDate(
+      new Date(),
+      (typeof Session.getScriptTimeZone === 'function' ? Session.getScriptTimeZone() : 'Europe/Rome'),
+      'yyyy-MM-dd'
+    );
+    const newBullet = summarySentence ? `• [${localDate}] ${summarySentence}` : '';
 
     // Controlliamo l'overlap ma con tolleranza (data aiuta l'unicità)
     if (newBullet && !summaryLines.some(line => line.toLowerCase() === newBullet.toLowerCase())) {
@@ -1691,6 +1707,12 @@ class EmailProcessor {
   flush() {
     if (this.geminiService && typeof this.geminiService.flush === 'function') {
       this.geminiService.flush();
+    }
+    const semanticGemini = this.validator && this.validator.semanticValidator
+      ? this.validator.semanticValidator.geminiService
+      : null;
+    if (semanticGemini && typeof semanticGemini.flush === 'function') {
+      semanticGemini.flush();
     }
   }
 }

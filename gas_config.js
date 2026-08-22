@@ -9,8 +9,7 @@ const CONFIG = {
   MODEL_NAME: 'gemini-3.7-flash',
 
   // === Generazione ===
-  // Ripristinata temperature per compatibilità API (il parametro thinking_level causava errore 400).
-  TEMPERATURE: 0.7,
+  // Gemini 3.7 non accetta i parametri di sampling legacy (temperature/topP/topK).
   MAX_OUTPUT_TOKENS: 6000,
 
   // === Validazione ===
@@ -64,7 +63,7 @@ const CONFIG = {
     enabled: true,                   // Includi allegati multimodali (Vision) nel prompt
     maxFiles: 4,                     // Numero massimo di allegati da processare
     maxBytesPerFile: 5 * 1024 * 1024,// 5 MB per file
-    ocrTriggerKeywords: [            // Attiva Vision solo se il contenuto è rilevante
+    ocrTriggerKeywords: [            // Metadati descrittivi; non bloccano gli allegati reali
       'poesia', 'componimento', 'testo', 'immagine', 'allegato', 'foto', 'foto poesia'
     ]
   },
@@ -137,7 +136,7 @@ const CONFIG = {
     enabled: true,
     ttlSeconds: 3300,                  // 55 minuti
     expirySkewMs: 90000,               // Ricrea prima della scadenza
-    minCacheableTokens: 1024,
+    minCacheableTokens: 4096,
     splitMarker: '**EMAIL DA RISPONDERE:**',
     propertyPrefix: 'gemini_context_cache_v3_'
   },
@@ -260,8 +259,6 @@ function validateConfig() {
   // 2. Validazione Tipi e Valori Logici
   // API & Gen
   checkType('MODEL_NAME', CONFIG.MODEL_NAME, 'string');
-  checkType('TEMPERATURE', CONFIG.TEMPERATURE, 'number');
-  checkRange('TEMPERATURE', CONFIG.TEMPERATURE, 0.0, 1.0);
   checkType('MAX_OUTPUT_TOKENS', CONFIG.MAX_OUTPUT_TOKENS, 'number');
 
   // Gmail & Process
@@ -349,7 +346,12 @@ function healthCheck() {
 
     // Controllo Knowledge Base
     try {
-      SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+      const spreadsheet = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+      const sheet = spreadsheet.getSheetByName(CONFIG.KB_SHEET_NAME || 'Istruzioni');
+      if (!sheet) throw new Error(`Foglio '${CONFIG.KB_SHEET_NAME || 'Istruzioni'}' non trovato`);
+      const rows = sheet.getDataRange().getValues();
+      const hasContent = rows.some(row => row.some(cell => String(cell == null ? '' : cell).trim()));
+      if (!hasContent) throw new Error('Knowledge Base vuota');
       health.components.knowledgeBase = { status: 'OK' };
     } catch (e) {
       health.components.knowledgeBase = { status: 'ERROR', error: e.message };

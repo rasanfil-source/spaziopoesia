@@ -35,14 +35,18 @@ const RESOURCE_CACHE_MAX_PART_SIZE = 95000;
 // ====================================================================
 
 function withSheetsRetry(fn, context = 'Operazione Sheets') {
-  const maxRetries = 3;
+  const maxRetries = (typeof CONFIG !== 'undefined' && CONFIG.SHEETS_RETRY_MAX)
+    ? CONFIG.SHEETS_RETRY_MAX : 3;
+  const initialBackoffMs = (typeof CONFIG !== 'undefined' && CONFIG.SHEETS_RETRY_BACKOFF_MS)
+    ? CONFIG.SHEETS_RETRY_BACKOFF_MS : 1000;
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
       return fn();
     } catch (error) {
       if (attempt < maxRetries - 1) {
-        console.warn(`⚠️ [${context}] Tentativo ${attempt + 1}/${maxRetries} fallito: ${error.message}. Retry in ${1000 * Math.pow(2, attempt)}ms...`);
-        Utilities.sleep(1000 * Math.pow(2, attempt));
+        const delay = initialBackoffMs * Math.pow(2, attempt);
+        console.warn(`⚠️ [${context}] Tentativo ${attempt + 1}/${maxRetries} fallito: ${error.message}. Retry in ${delay}ms...`);
+        Utilities.sleep(delay);
         continue;
       }
       console.error(`❌ [${context}] Tutti i ${maxRetries} tentativi esauriti. Ultimo errore: ${error.message}`);
@@ -65,7 +69,11 @@ function loadResources(acquireLock = true, hasExternalLock = false) {
   // perché maschererebbero regressioni d'inizializzazione del runtime.
 
   const now = Date.now();
-  const cacheIsFresh = GLOBAL_CACHE.loaded && GLOBAL_CACHE.lastLoadedAt && ((now - GLOBAL_CACHE.lastLoadedAt) < RESOURCE_CACHE_TTL_MS);
+  const cacheIsFresh = GLOBAL_CACHE.loaded &&
+    GLOBAL_CACHE.lastLoadedAt &&
+    typeof GLOBAL_CACHE.knowledgeBase === 'string' &&
+    GLOBAL_CACHE.knowledgeBase.trim() &&
+    ((now - GLOBAL_CACHE.lastLoadedAt) < RESOURCE_CACHE_TTL_MS);
   if (cacheIsFresh) return;
 
   const lock = LockService.getScriptLock();
@@ -102,6 +110,9 @@ function _loadResourcesInternal() {
     if (cachedData) {
       try {
         const parsedData = _deserializeResourceCache(cachedData);
+        if (!parsedData || typeof parsedData.knowledgeBase !== 'string' || !parsedData.knowledgeBase.trim()) {
+          throw new Error('Cache Knowledge Base vuota o non valida');
+        }
         Object.assign(GLOBAL_CACHE, parsedData);
         GLOBAL_CACHE.loaded = true;
         console.log('✓ Risorse caricate dalla Cache veloce.');
@@ -153,12 +164,16 @@ function _loadResourcesInternal() {
   const kbSheetName = cfg.KB_SHEET_NAME || 'Istruzioni';
   const kbSheet = withSheetsRetry(() => ss.getSheetByName(kbSheetName), 'Recupero foglio Knowledge Base');
 
+  if (!kbSheet) {
+    throw new Error(`Foglio Knowledge Base '${kbSheetName}' non trovato: elaborazione email interrotta.`);
+  }
   newCacheData.knowledgeBase = '';
-  if (kbSheet) {
-    withSheetsRetry(() => {
-      const kbRows = kbSheet.getDataRange().getValues();
-      newCacheData.knowledgeBase = _sheetRowsToText(kbRows);
-    }, 'Lettura Knowledge Base');
+  withSheetsRetry(() => {
+    const kbRows = kbSheet.getDataRange().getValues();
+    newCacheData.knowledgeBase = _sheetRowsToText(kbRows);
+  }, 'Lettura Knowledge Base');
+  if (!newCacheData.knowledgeBase.trim()) {
+    throw new Error(`Foglio Knowledge Base '${kbSheetName}' vuoto: elaborazione email interrotta.`);
   }
 
   // Config Avanzata
@@ -464,11 +479,56 @@ function setupMainTrigger(minutes) {
 function setupMetricsTrigger() {
   deleteTriggersByHandler_('exportMetricsToSheet');
 
+  if (typeof CONFIG === 'undefined' || !CONFIG.METRICS_SHEET_ID) {
+    console.log('ℹ️ Trigger metriche non creato: METRICS_SHEET_ID non configurato.');
+    return false;
+  }
+
   ScriptApp.newTrigger('exportMetricsToSheet')
     .timeBased()
     .atHour(23)
     .everyDays(1)
     .create();
+  return true;
+}
+
+/** Esporta una fotografia giornaliera delle quote Gemini. */
+function exportMetricsToSheet() {
+  if (typeof CONFIG === 'undefined' || !CONFIG.METRICS_SHEET_ID) {
+    console.log('ℹ️ Export metriche saltato: METRICS_SHEET_ID non configurato.');
+    return { exported: false, reason: 'metrics_sheet_not_configured' };
+  }
+
+  const limiter = new GeminiRateLimiter();
+  const stats = limiter.getUsageStats();
+  const spreadsheet = withSheetsRetry(
+    () => SpreadsheetApp.openById(CONFIG.METRICS_SHEET_ID),
+    'Apertura foglio metriche'
+  );
+  const sheetName = CONFIG.METRICS_SHEET_NAME || 'DailyMetrics';
+  let sheet = spreadsheet.getSheetByName(sheetName);
+  if (!sheet) sheet = spreadsheet.insertSheet(sheetName);
+
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow([
+      'timestamp', 'date', 'modelKey', 'modelName',
+      'rpdUsed', 'rpdLimit', 'rpmUsed', 'rpmLimit',
+      'tpmUsed', 'tpmLimit', 'tokensToday', 'nextReset'
+    ]);
+  }
+
+  const timestamp = new Date().toISOString();
+  Object.keys(stats.models || {}).forEach(modelKey => {
+    const model = stats.models[modelKey];
+    sheet.appendRow([
+      timestamp, stats.date, modelKey, model.name,
+      model.rpd.used, model.rpd.limit, model.rpm.used, model.rpm.limit,
+      model.tpm.used, model.tpm.limit, model.tokensToday, stats.nextReset
+    ]);
+  });
+
+  console.log(`✅ Metriche esportate in ${sheetName}`);
+  return { exported: true, rows: Object.keys(stats.models || {}).length };
 }
 
 /**

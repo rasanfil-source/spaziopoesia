@@ -391,13 +391,21 @@ class GmailService {
         }
         console.log(`   📎 Allegati trovati: ${attachments.length}`);
 
+        let filesConsidered = 0;
         for (const attachment of attachments) {
             const name = attachment.getName ? (attachment.getName() || 'allegato') : 'allegato';
 
-            if (result.blobs.length >= settings.maxFiles) {
+            if (this.isLikelySignatureImage(attachment)) {
+                result.skipped.push({ name: name, reason: 'likely_signature_image' });
+                console.log(`   🖋️ Immagine firma ignorata: ${name}`);
+                continue;
+            }
+
+            if (filesConsidered >= settings.maxFiles) {
                 result.skipped.push({ name: name, reason: 'max_files' });
                 continue;
             }
+            filesConsidered++;
 
             const size = attachment.getSize ? attachment.getSize() : 0;
             if (size > settings.maxBytesPerFile) {
@@ -459,6 +467,93 @@ class GmailService {
     }
 
     /**
+     * Euristica conservativa per distinguere loghi/firme da immagini significative.
+     * Un'immagine viene esclusa solo con segnali forti; in caso di dubbio passa a Vision.
+     */
+    isLikelySignatureImage(attachment) {
+        if (!attachment) return false;
+
+        let mimeType = '';
+        let name = '';
+        let size = 0;
+        try {
+            mimeType = String(attachment.getContentType ? attachment.getContentType() : '').toLowerCase();
+            name = String(attachment.getName ? attachment.getName() : '').toLowerCase();
+            size = Number(attachment.getSize ? attachment.getSize() : 0) || 0;
+        } catch (e) {
+            return false;
+        }
+
+        if (!mimeType.startsWith('image/')) return false;
+
+        const dimensions = this._getImageDimensions_(attachment, mimeType);
+        const width = dimensions ? dimensions.width : 0;
+        const height = dimensions ? dimensions.height : 0;
+        const maxSide = Math.max(width, height);
+        const minSide = Math.min(width, height);
+        const aspectRatio = minSide > 0 ? maxSide / minSide : 0;
+
+        // Tracking pixel o spacer quasi certamente non è contenuto inviato dall'utente.
+        if (width > 0 && height > 0 && width <= 16 && height <= 16) return true;
+
+        const strongNamePattern = /(^|[_.\-\s])(firma|signature|sig|logo|logotipo|footer|spacer|tracking|pixel|social|facebook|instagram|linkedin|twitter|youtube|tiktok|icon|icona)([_.\-\s]|$)/i;
+        const hasSignatureName = strongNamePattern.test(name);
+
+        // Nome esplicito + file contenuto: firma/logo con elevata probabilità.
+        if (hasSignatureName && size <= 300 * 1024 && (maxSide === 0 || maxSide <= 1200)) return true;
+
+        if (width > 0 && height > 0) {
+            const bannerLike = width <= 900 && height <= 250 && aspectRatio >= 3 && size <= 200 * 1024;
+            if (bannerLike) return true;
+        }
+
+        return false;
+    }
+
+    /** Legge le dimensioni senza librerie esterne per PNG, GIF e JPEG. */
+    _getImageDimensions_(attachment, mimeType) {
+        let bytes;
+        try {
+            bytes = attachment.getBytes ? attachment.getBytes() : null;
+        } catch (e) {
+            return null;
+        }
+        if (!bytes || bytes.length < 10) return null;
+
+        const u8 = index => {
+            const value = bytes[index];
+            return value < 0 ? value + 256 : value;
+        };
+        const u16be = index => (u8(index) << 8) | u8(index + 1);
+        const u32be = index => ((u8(index) * 0x1000000) + (u8(index + 1) << 16) + (u8(index + 2) << 8) + u8(index + 3));
+
+        if (mimeType === 'image/png' && bytes.length >= 24 && u8(0) === 137 && u8(1) === 80) {
+            return { width: u32be(16), height: u32be(20) };
+        }
+        if (mimeType === 'image/gif' && bytes.length >= 10) {
+            return {
+                width: u8(6) | (u8(7) << 8),
+                height: u8(8) | (u8(9) << 8)
+            };
+        }
+        if ((mimeType === 'image/jpeg' || mimeType === 'image/jpg') && u8(0) === 0xFF && u8(1) === 0xD8) {
+            let offset = 2;
+            while (offset + 8 < bytes.length) {
+                if (u8(offset) !== 0xFF) { offset++; continue; }
+                const marker = u8(offset + 1);
+                if ([0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF].includes(marker)) {
+                    return { height: u16be(offset + 5), width: u16be(offset + 7) };
+                }
+                if (marker === 0xD8 || marker === 0xD9) { offset += 2; continue; }
+                const segmentLength = u16be(offset + 2);
+                if (segmentLength < 2) break;
+                offset += 2 + segmentLength;
+            }
+        }
+        return null;
+    }
+
+    /**
      * Converte un file Office in PDF usando Drive Advanced Service.
      * Crea un file temporaneo, lo esporta in PDF e lo cancella sempre.
      * @param {Blob} attachmentBlob
@@ -484,13 +579,17 @@ class GmailService {
                 fileId = file && file.id ? file.id : null;
             } else if (typeof Drive.Files.create === 'function') {
                 // Drive API v3
-                const targetMime = 'application/vnd.google-apps.document';
+                const sourceMime = (blob.getContentType ? blob.getContentType() : '').toLowerCase();
+                const isPowerPoint = sourceMime.includes('mspowerpoint') || sourceMime.includes('presentationml');
+                const targetMime = isPowerPoint
+                    ? 'application/vnd.google-apps.presentation'
+                    : 'application/vnd.google-apps.document';
                 const resource = {
                     name: `TEMP_CONV_${fileName}`,
                     mimeType: targetMime
                 };
                 const file = Drive.Files.create(resource, blob, {
-                    mimeType: targetMime
+                    fields: 'id,mimeType'
                 });
                 
                 if (file && file.mimeType && file.mimeType !== targetMime) {
@@ -880,6 +979,7 @@ class GmailService {
                         this.addLabelToThread(targetThread, errorLabel);
                     }
                 }
+                throw new Error(`Invio Gmail fallito sia in HTML sia in testo semplice: ${fallbackError.message}`);
             }
         }
     }

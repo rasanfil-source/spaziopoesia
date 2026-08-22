@@ -29,8 +29,10 @@ if (typeof process !== 'undefined' && typeof require !== 'undefined') {
         global.Utilities = {
             formatDate: (date, tz, fmt) => new Date(date).toISOString(),
             sleep: () => { },
-            computeDigest: () => [0, 1, 2, 3],
-            DigestAlgorithm: { MD5: 'MD5' },
+            computeDigest: (algorithm, value) => Array.from(
+                require('crypto').createHash('sha256').update(String(value || '')).digest()
+            ).map(byte => byte > 127 ? byte - 256 : byte),
+            DigestAlgorithm: { MD5: 'MD5', SHA_256: 'SHA_256' },
             getUuid: () => 'test-uuid-' + Math.random().toString(36).substring(2, 9),
             base64Encode: (data) => Buffer.from(data).toString('base64')
         };
@@ -116,13 +118,15 @@ if (typeof process !== 'undefined' && typeof require !== 'undefined') {
     if (typeof global.Session === 'undefined') {
         global.Session = {
             getEffectiveUser: () => ({ getEmail: () => 'bot@example.com' }),
-            getActiveUser: () => ({ getEmail: () => 'bot@example.com' })
+            getActiveUser: () => ({ getEmail: () => 'bot@example.com' }),
+            getScriptTimeZone: () => 'Europe/Rome'
         };
     }
 
     // Caricamento script core
     [
         'gas_config.js',
+        'gas_main.js',
         'gas_error_types.js',
         'gas_rate_limiter.js',
         'gas_memory_service.js',
@@ -337,6 +341,188 @@ function runAllTests() {
         test('CONFIG.GEMINI_MODELS contiene flash-3.7 con limiti corretti', results, () => {
             const m = CONFIG.GEMINI_MODELS['flash-3.7'];
             return m && m.name === 'gemini-3.7-flash' && m.rpm === 10 && m.tpm === 250000 && m.rpd === 1500;
+        });
+    });
+
+    // 10. Regressioni sui bug critici della pipeline
+    testGroup('Punto #10: Regressioni critiche - Cache, invio, prompt e quote', results, () => {
+        test('Gemini 3.7 non riceve il parametro temperature', results, () => {
+            const service = new GeminiService();
+            let payload = null;
+            service.fetchFn = (url, options) => {
+                payload = JSON.parse(options.payload);
+                return {
+                    getResponseCode: () => 200,
+                    getContentText: () => JSON.stringify({
+                        candidates: [{ content: { parts: [{ text: 'Risposta valida' }] } }]
+                    })
+                };
+            };
+            service._generateWithModel('prompt', 'gemini-3.7-flash');
+            return payload && !Object.prototype.hasOwnProperty.call(payload.generationConfig, 'temperature');
+        });
+
+        test('Context Cache non viene riutilizzata per contenuti differenti', results, () => {
+            const service = new GeminiService();
+            service.config.GEMINI_CONTEXT_CACHE = Object.assign({}, service.config.GEMINI_CONTEXT_CACHE, {
+                enabled: true,
+                minCacheableTokens: 1,
+                propertyPrefix: 'test_cache_fingerprint_'
+            });
+            ['name', 'expiry', 'fingerprint'].forEach(suffix => {
+                service.props.deleteProperty('test_cache_fingerprint_' + suffix);
+            });
+            let calls = 0;
+            service.fetchFn = () => {
+                calls++;
+                return {
+                    getResponseCode: () => 200,
+                    getContentText: () => JSON.stringify({ name: `cachedContents/${calls}` })
+                };
+            };
+            const first = service.getOrCreateCachedContent('CONTESTO_A');
+            const second = service.getOrCreateCachedContent('CONTESTO_B');
+            return calls === 2 && first !== second;
+        });
+
+        test('Doppio fallimento Gmail viene propagato al chiamante', results, () => {
+            const service = new GmailService();
+            service.addLabelToThread = () => { };
+            const resource = {
+                reply: () => { throw new Error('send failed'); },
+                getThread: () => ({ getMessages: () => [] })
+            };
+            let threw = false;
+            try {
+                service.sendHtmlReply(resource, 'Risposta', {
+                    senderName: 'Mario', senderEmail: 'mario@example.com',
+                    subject: 'Oggetto', rfc2822MessageId: ''
+                });
+            } catch (e) {
+                threw = /Invio Gmail fallito/.test(e.message);
+            }
+            return threw;
+        });
+
+        test('Prompt enorme conserva sempre il contenuto email', results, () => {
+            const engine = new PromptEngine();
+            const prompt = engine.buildPrompt({
+                emailContent: 'TESTO_UTENTE ' + 'x'.repeat(500000),
+                emailSubject: 'Poesia',
+                knowledgeBase: 'Istruzioni essenziali',
+                senderName: 'Mario',
+                senderEmail: 'mario@example.com'
+            });
+            return prompt.includes('**EMAIL DA RISPONDERE:**') && prompt.includes('TESTO_UTENTE');
+        });
+
+        test('RateLimiter passa la stima token alla selezione modello', results, () => {
+            const limiter = new GeminiRateLimiter();
+            let captured = null;
+            limiter.selectModel = (taskType, options) => {
+                captured = options;
+                return { available: false, reason: 'test_stop' };
+            };
+            try {
+                limiter.executeRequest('generation', () => 'unused', { estimatedTokens: 50000 });
+            } catch (e) { }
+            return captured && captured.estimatedTokens === 50000;
+        });
+
+        test('OCR include immagini inline significative anche senza parole chiave', results, () => {
+            const processor = Object.create(EmailProcessor.prototype);
+            processor.gmailService = new GmailService();
+            let optionsSeen = null;
+            const messageWithAttachment = {
+                getAttachments: options => {
+                    optionsSeen = options;
+                    return [{ getName: () => 'logo.png' }];
+                }
+            };
+            const messageWithoutAttachment = {
+                getAttachments: options => {
+                    optionsSeen = options;
+                    return [];
+                }
+            };
+            const simpleThanks = processor._shouldTryOcr('Grazie', 'Saluti', messageWithoutAttachment);
+            const whatsappState = processor._shouldTryOcr('Grazie', 'Saluti', messageWithAttachment);
+            return simpleThanks === false && whatsappState === true && optionsSeen.includeInlineImages === true;
+        });
+
+        test('Euristica firma scarta logo ma conserva stato WhatsApp inline', results, () => {
+            const service = new GmailService();
+            const pngBytes = (width, height) => {
+                const bytes = new Array(24).fill(0);
+                bytes[0] = 137; bytes[1] = 80;
+                bytes[16] = (width >>> 24) & 255;
+                bytes[17] = (width >>> 16) & 255;
+                bytes[18] = (width >>> 8) & 255;
+                bytes[19] = width & 255;
+                bytes[20] = (height >>> 24) & 255;
+                bytes[21] = (height >>> 16) & 255;
+                bytes[22] = (height >>> 8) & 255;
+                bytes[23] = height & 255;
+                return bytes;
+            };
+            const makeImage = (name, width, height, size) => ({
+                getName: () => name,
+                getContentType: () => 'image/png',
+                getSize: () => size,
+                getBytes: () => pngBytes(width, height)
+            });
+            const logo = makeImage('logo_parrocchia.png', 500, 120, 60000);
+            const whatsappState = makeImage('image001.png', 1080, 1920, 350000);
+            return service.isLikelySignatureImage(logo) === true &&
+                service.isLikelySignatureImage(whatsappState) === false;
+        });
+
+        test('Errore quick-check produce stato indeterminato e ritentabile', results, () => {
+            const service = new GeminiService();
+            service.useRateLimiter = false;
+            service.backupKey = null;
+            service.fetchFn = () => ({
+                getResponseCode: () => 503,
+                getContentText: () => 'temporarily unavailable'
+            });
+            const result = service.shouldRespondToEmail('Vorrei informazioni', 'Richiesta');
+            return result.shouldRespond === false && result.indeterminate === true;
+        });
+
+        test('PowerPoint viene convertito in Google Slides', results, () => {
+            const oldDrive = global.Drive;
+            const oldDriveApp = global.DriveApp;
+            let targetMime = null;
+            try {
+                global.Drive = {
+                    Files: {
+                        create: resource => {
+                            targetMime = resource.mimeType;
+                            return { id: 'temp-id', mimeType: resource.mimeType };
+                        },
+                        delete: () => { }
+                    }
+                };
+                global.DriveApp = {
+                    getFileById: () => ({ getAs: () => ({ converted: true }) })
+                };
+                const blob = {
+                    copyBlob: () => blob,
+                    getName: () => 'presentazione.pptx',
+                    getContentType: () => 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+                };
+                const service = new GmailService();
+                service._convertOfficeToPdf(blob);
+                return targetMime === 'application/vnd.google-apps.presentation';
+            } finally {
+                global.Drive = oldDrive;
+                global.DriveApp = oldDriveApp;
+            }
+        });
+
+        test('Export metriche senza configurazione termina senza creare dati', results, () => {
+            const result = exportMetricsToSheet();
+            return result.exported === false && result.reason === 'metrics_sheet_not_configured';
         });
     });
 

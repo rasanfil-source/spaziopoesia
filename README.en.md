@@ -19,7 +19,7 @@ The system operates as an automated pipeline that follows these steps:
 4.  **Memory Retrieval**: Using the `MemoryService`, the bot "remembers" previous interactions in the same thread to maintain a coherent conversation.
 5.  **Prompt Engineering**: The `PromptEngine` builds a detailed request for Gemini, including thread context, the Knowledge Base, and any attachments (including OCR).
 6.  **Generation & Validation**: Gemini generates the response, which is then validated by the `ResponseValidator` to ensure quality and consistency.
-7.  **Sending & Labeling**: The response is sent, and the email is archived with a label (e.g., `IA`, `Verifica`, or `Errore`).
+7.  **Sending & Labeling**: The response is sent and the message is labeled (e.g., `IA`, `Verifica`, or `Errore`) without being automatically archived.
 
 ## ✨ Key Features
 

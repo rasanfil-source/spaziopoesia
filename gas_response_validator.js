@@ -1412,7 +1412,8 @@ Rispondi SOLO con questo JSON (senza markdown):
         (modelName) => this.geminiService._generateWithModel(prompt, modelName),
         {
           estimatedTokens: estimatedTokens,
-          preferQuality: false
+          preferQuality: false,
+          maxRetries: this.maxRetries
         }
       );
 
@@ -1427,7 +1428,8 @@ Rispondi SOLO con questo JSON (senza markdown):
     try {
       return this.geminiService._withRetry(
         () => this.geminiService._generateWithModel(prompt, this.geminiService.modelName),
-        'Semantic validation'
+        'Semantic validation',
+        this.maxRetries
       );
     } finally {
       this.geminiService.maxRetries = originalRetries;

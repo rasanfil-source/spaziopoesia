@@ -19,7 +19,7 @@ Il sistema opera come una pipeline automatizzata che segue questi passaggi:
 4.  **Recupero Memoria**: Grazie al `MemoryService`, il bot "ricorda" le interazioni precedenti nello stesso thread per mantenere una conversazione coerente.
 5.  **Prompt Engineering**: Il `PromptEngine` costruisce una richiesta dettagliata per Gemini, includendo il contesto del thread, la Knowledge Base e gli eventuali allegati (OCR incluso).
 6.  **Generazione & Validazione**: Gemini genera la risposta, che viene poi validata dal `ResponseValidator` per assicurarne la qualità e la coerenza.
-7.  **Invio & Etichettatura**: La risposta viene inviata e l'email viene archiviata con un'etichetta (es. `IA`, `Verifica` o `Errore`).
+7.  **Invio & Etichettatura**: La risposta viene inviata e il messaggio viene contrassegnato con un'etichetta (es. `IA`, `Verifica` o `Errore`), senza archiviarlo automaticamente.
 
 ## ✨ Caratteristiche Principali
 

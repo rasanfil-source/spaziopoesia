@@ -160,7 +160,33 @@ class PromptEngine {
       }
     }
 
+    // Il messaggio corrente è il dato indispensabile: gli riserviamo budget prima
+    // di aggiungere KB, memoria e template. Se è enorme viene troncato, mai omesso.
+    const EMAIL_TOKEN_BUDGET = Math.max(2000, Math.floor(MAX_SAFE_TOKENS * 0.25));
+    let workingEmailContent = this._normalizePromptTextInput(emailContent, '');
+    let coreEmailSection = this._renderEmailContent(
+      workingEmailContent,
+      emailSubject,
+      senderName,
+      senderEmail,
+      detectedLanguage
+    );
+    if (this.estimateTokens(coreEmailSection) > EMAIL_TOKEN_BUDGET) {
+      const maxEmailChars = Math.max(4000, Math.floor(EMAIL_TOKEN_BUDGET * 3.5) - 2000);
+      workingEmailContent = workingEmailContent.slice(0, maxEmailChars).trim() + '\n[… email troncata per limite del modello …]';
+      coreEmailSection = this._renderEmailContent(
+        workingEmailContent,
+        emailSubject,
+        senderName,
+        senderEmail,
+        detectedLanguage
+      );
+      console.warn(`⚠️ Email corrente troncata a ${maxEmailChars} caratteri per rispettare il budget`);
+    }
+
     let usedTokens = 0;
+    const reservedEmailTokens = this.estimateTokens(coreEmailSection);
+    let emailAdded = false;
 
     /**
      * Helper per aggiungere sezioni tracciando il budget token
@@ -169,8 +195,12 @@ class PromptEngine {
       if (!section) return;
       const sectionTokens = this.estimateTokens(section);
 
-      // Se superiamo il budget, saltiamo a meno che non sia forzato (es. istruzioni critiche)
-      if (!options.force && usedTokens + sectionTokens > MAX_SAFE_TOKENS) {
+      const effectiveBudget = emailAdded || label === 'EmailContent'
+        ? MAX_SAFE_TOKENS
+        : Math.max(0, MAX_SAFE_TOKENS - reservedEmailTokens);
+
+      // Prima dell'email preserva sempre lo spazio riservato al messaggio corrente.
+      if (!options.force && usedTokens + sectionTokens > effectiveBudget) {
         console.warn(`⚠️ Budget esaurito, sezione saltata: ${label}`);
         skippedCount++;
         return;
@@ -185,6 +215,7 @@ class PromptEngine {
 
       sections.push(section);
       usedTokens += sectionTokens;
+      if (label === 'EmailContent') emailAdded = true;
     };
 
     /**
@@ -257,7 +288,7 @@ class PromptEngine {
     if (conversationHistory) {
       addSection(this._renderConversationHistory(conversationHistory), 'ConversationHistory');
     }
-    addSection(this._renderEmailContent(emailContent, emailSubject, senderName, senderEmail, detectedLanguage), 'EmailContent');
+    addSection(coreEmailSection, 'EmailContent', { force: true });
     addSection(this._renderAttachmentContext(workingAttachmentsContext), 'AttachmentsContext');
 
     // ══════════════════════════════════════════════════════
@@ -280,7 +311,7 @@ class PromptEngine {
     addTemplate('ExamplesTemplate', this._renderExamples(category), 'Examples');
 
     // 17. REGOLE FINALI
-    addSection(this._renderResponseGuidelines(detectedLanguage, currentSeason, salutation, closing, category, emailContent, workingAttachmentsContext, memoryContext), 'ResponseGuidelines');
+    addSection(this._renderResponseGuidelines(detectedLanguage, currentSeason, salutation, closing, category, workingEmailContent, workingAttachmentsContext, memoryContext), 'ResponseGuidelines');
 
     if (category !== 'formal') {
       addTemplate('SpecialCasesTemplate', this._renderSpecialCases(), 'SpecialCases');

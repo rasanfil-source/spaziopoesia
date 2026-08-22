@@ -136,7 +136,6 @@ class GeminiService {
     // Usa chiave override se fornita, altrimenti chiave primaria
     const activeKey = apiKeyOverride || this.primaryKey;
     const url = this._buildGenerateUrl(modelName);
-    const temperature = this.config.TEMPERATURE || 0.7;
     const maxTokens = this.config.MAX_OUTPUT_TOKENS || 6000;
 
     console.log(`\uD83E\uDD16 Chiamata ${modelName} (prompt: ${prompt.length} caratteri)...`);
@@ -166,7 +165,6 @@ class GeminiService {
         payload: JSON.stringify({
           contents: [{ role: 'user', parts: requestParts }],
           generationConfig: {
-            temperature: temperature,
             maxOutputTokens: maxTokens
           }
         }),
@@ -249,18 +247,36 @@ class GeminiService {
     if (!this.config.GEMINI_CONTEXT_CACHE?.enabled) return null;
 
     const cacheConfig = this.config.GEMINI_CONTEXT_CACHE;
+    const safeContent = typeof content === 'string' ? content : String(content || '');
+    const minCacheableTokens = cacheConfig.minCacheableTokens || 4096;
+    const estimatedTokens = this._estimateTokens(safeContent, []);
+    if (estimatedTokens < minCacheableTokens) {
+      console.log(`ℹ️ Context Cache saltata: ~${estimatedTokens} token, minimo ${minCacheableTokens}`);
+      return null;
+    }
+
     const propPrefix = cacheConfig.propertyPrefix || 'gemini_context_cache_';
     const cacheKey = propPrefix + 'name';
     const expiryKey = propPrefix + 'expiry';
+    const fingerprintKey = propPrefix + 'fingerprint';
+    const fingerprint = this._computeCacheFingerprint_(safeContent, systemInstructions, tools);
 
     const cachedName = this.props.getProperty(cacheKey);
     const cachedExpiry = parseInt(this.props.getProperty(expiryKey) || '0', 10);
+    const cachedFingerprint = this.props.getProperty(fingerprintKey);
     const now = Date.now();
 
-    // Se esiste ed è valida, restituisci
-    if (cachedName && cachedExpiry > (now + (cacheConfig.expirySkewMs || 0))) {
+    // Riusa esclusivamente una cache creata dallo stesso modello e dallo stesso contenuto.
+    if (cachedName && cachedFingerprint === fingerprint && cachedExpiry > (now + (cacheConfig.expirySkewMs || 0))) {
       console.log(`♻️ Uso Context Cache esistente: ${cachedName} (scadenza: ${new Date(cachedExpiry).toISOString()})`);
       return cachedName;
+    }
+
+    if (cachedName && cachedFingerprint !== fingerprint) {
+      console.log('🔐 Context Cache precedente non riutilizzata: contenuto differente');
+      this.props.deleteProperty(cacheKey);
+      this.props.deleteProperty(expiryKey);
+      this.props.deleteProperty(fingerprintKey);
     }
 
     console.log('🆕 Creazione nuova Context Cache...');
@@ -269,7 +285,7 @@ class GeminiService {
     const payload = {
       model: `models/${this.modelName}`,
       ttl: `${cacheConfig.ttlSeconds || 3600}s`,
-      contents: [{ role: 'user', parts: [{ text: content }] }],
+      contents: [{ role: 'user', parts: [{ text: safeContent }] }],
       systemInstruction: systemInstructions ? { parts: [{ text: systemInstructions }] } : undefined,
       tools: tools.length > 0 ? tools : undefined
     };
@@ -299,7 +315,8 @@ class GeminiService {
 
       this.props.setProperties({
         [cacheKey]: name,
-        [expiryKey]: String(expiry)
+        [expiryKey]: String(expiry),
+        [fingerprintKey]: fingerprint
       });
 
       console.log(`✅ Nuova Context Cache creata: ${name}`);
@@ -316,6 +333,28 @@ class GeminiService {
     }
   }
 
+  _computeCacheFingerprint_(content, systemInstructions, tools) {
+    const canonical = JSON.stringify({
+      model: this.modelName,
+      content: content || '',
+      systemInstructions: systemInstructions || '',
+      tools: tools || []
+    });
+
+    try {
+      const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, canonical);
+      return bytes.map(byte => ((byte < 0 ? byte + 256 : byte).toString(16).padStart(2, '0'))).join('');
+    } catch (e) {
+      // Fallback deterministico per ambienti di test privi di SHA-256.
+      let hash = 2166136261;
+      for (let i = 0; i < canonical.length; i++) {
+        hash ^= canonical.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+      }
+      return `fnv1a-${(hash >>> 0).toString(16)}-${canonical.length}`;
+    }
+  }
+
   /**
    * Generazione usando la cache esistente (Zero API Extra).
    * Implementa Auto-healing (Punto 5): se 404, invalida e riprova.
@@ -327,7 +366,6 @@ class GeminiService {
       cachedContent: cachedName,
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       generationConfig: {
-        temperature: this.config.TEMPERATURE || 0.7,
         maxOutputTokens: this.config.MAX_OUTPUT_TOKENS || 6000
       }
     };
@@ -348,6 +386,7 @@ class GeminiService {
         const propPrefix = this.config.GEMINI_CONTEXT_CACHE.propertyPrefix;
         this.props.deleteProperty(propPrefix + 'name');
         this.props.deleteProperty(propPrefix + 'expiry');
+        this.props.deleteProperty(propPrefix + 'fingerprint');
         // In un flusso reale, il chiamante dovrebbe ricreare la cache.
         throw new Error('CACHE_MISS_404');
       }
@@ -518,7 +557,8 @@ Output JSON:
 
     // Risultato default in caso di errori
     const defaultResult = {
-      shouldRespond: false, // Failsafe conservativo: evita risposte massive in caso di errore
+      shouldRespond: false, // Non rispondere, ma non considerare il messaggio definitivamente filtrato.
+      indeterminate: true,
       language: detection.lang,
       reason: 'quick_check_failed',
       classification: {
@@ -580,6 +620,7 @@ Output JSON:
     return {
       // Rispondi solo se la richiesta è esplicita e necessaria
       shouldRespond: isTrue,
+      indeterminate: false,
       language: this._resolveLanguage(data.language, detection.lang, detection.safetyGrade),
       reason: data.reason || 'quick_check',
       classification: {
@@ -1223,6 +1264,7 @@ Output JSON:
     const fallbackLang = detection.lang;
     const defaultResult = {
       shouldRespond: false,
+      indeterminate: true,
       language: fallbackLang,
       reason: 'failsafe_local_detection',
       classification: {
@@ -1301,7 +1343,11 @@ Output JSON:
     const targetModel = options.modelName || this.modelName;
     const skipRateLimit = options.skipRateLimit || false;
     const attachments = options.attachments || [];
-    const useCache = this.config.GEMINI_CONTEXT_CACHE?.enabled && !skipRateLimit && attachments.length === 0;
+    const useCache = this.config.GEMINI_CONTEXT_CACHE?.enabled &&
+      !skipRateLimit &&
+      attachments.length === 0 &&
+      targetModel === this.modelName &&
+      targetKey === this.primaryKey;
 
     // ═══════════════════════════════════════════════════════════════════
     // CONTEXT CACHING PATH (v1beta REST)

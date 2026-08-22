@@ -229,8 +229,12 @@ class GeminiRateLimiter {
    */
   _refreshCache() {
     this.allProps = this.props.getProperties() || {};
-    this.cache.rpmWindow = this._safeParseJson(this.allProps['rpm_window'], []);
-    this.cache.tpmWindow = this._safeParseJson(this.allProps['tpm_window'], []);
+    const persistedRpm = this._safeParseJson(this.allProps['rpm_window'], []);
+    const persistedTpm = this._safeParseJson(this.allProps['tpm_window'], []);
+    // Le richieste della sessione corrente possono non essere ancora state persistite:
+    // un refresh deve fonderle, non cancellarle.
+    this.cache.rpmWindow = this._mergeWindowData(persistedRpm, this.cache.rpmWindow || []);
+    this.cache.tpmWindow = this._mergeWindowData(persistedTpm, this.cache.tpmWindow || []);
     this.cache.lastCacheUpdate = Date.now();
   }
 
@@ -482,7 +486,10 @@ class GeminiRateLimiter {
     const preferQuality = options.preferQuality || false;
 
     // 1. Selezione modello standard
-    const selection = this.selectModel(taskType, { preferQuality: preferQuality });
+    const selection = this.selectModel(taskType, {
+      preferQuality: preferQuality,
+      estimatedTokens: estimatedTokens
+    });
 
     if (!selection.available) {
       console.error(`\u274C Nessun modello disponibile: ${selection.reason}`);
