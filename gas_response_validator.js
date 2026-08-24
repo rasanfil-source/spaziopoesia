@@ -1255,7 +1255,10 @@ class SemanticValidator {
       return { isValid: true, confidence: regexResult.score, skipped: true };
     }
 
-    const cacheKey = this._cacheKey('halluc', response + knowledgeBase);
+    // Il verdetto dipende anche dai fatti forniti nell'email originale. Questa
+    // modifica riguarda soltanto l'isolamento della cache semantica e non altera
+    // le regole del controllo allucinazioni.
+    const cacheKey = this._cacheKey('halluc', response + knowledgeBase + (emailContent || ''));
     const cached = this._readCache(cacheKey);
     if (cached) return cached;
 

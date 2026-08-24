@@ -98,8 +98,9 @@ class EmailProcessor {
    * @param {string} knowledgeBase - KB testo semplice
    * @param {Set} labeledMessageIds - ID messaggi già etichettati (opzionale)
    * @param {boolean} skipLock - Se true, salta acquisizione lock
+   * @param {boolean} allowOwnLastWithPending - Consente di drenare altri unread dopo una risposta del bot nella stessa run
    */
-  processThread(thread, knowledgeBase, labeledMessageIds = new Set(), skipLock = false) {
+  processThread(thread, knowledgeBase, labeledMessageIds = new Set(), skipLock = false, allowOwnLastWithPending = false) {
     const threadId = thread.getId();
     const startTime = Date.now();
 
@@ -185,7 +186,7 @@ class EmailProcessor {
     let candidate = null;
     try {
       // Raccogli informazioni su thread e messaggi
-      // Ottieni ultimo messaggio NON LETTO nel thread
+      // Ottieni i messaggi non letti pendenti nel thread
       const messages = thread.getMessages();
       const unreadMessages = messages.filter(m => m.isUnread());
 
@@ -246,9 +247,13 @@ class EmailProcessor {
       });
 
       const externalUnread = unlabeledUnread.filter(message => {
-        // B07: Usa getFrom() leggero anziché la costosa extractMessageDetails()
         const rawFrom = (message.getFrom() || '');
-        const senderEmail = this.gmailService._extractEmailAddress(rawFrom);
+        let effectiveFrom = rawFrom;
+        try {
+          const replyTo = message.getReplyTo ? (message.getReplyTo() || '') : '';
+          if (replyTo && replyTo.includes('@')) effectiveFrom = replyTo;
+        } catch (e) { }
+        const senderEmail = this.gmailService._extractEmailAddress(effectiveFrom);
 
         // Se non riusciamo ad estrarre l'email, consideriamo il mittente come esterno per sicurezza
         if (!senderEmail) return true;
@@ -277,8 +282,9 @@ class EmailProcessor {
         return result;
       }
 
-      // Seleziona ultimo messaggio non letto non etichettato da esterni
-      candidate = externalUnread[externalUnread.length - 1];
+      // Elabora un messaggio alla volta, dal più vecchio al più recente. Così
+      // ogni mittente e ogni set di allegati riceve la propria risposta.
+      candidate = externalUnread[0];
       const messageDetails = this.gmailService.extractMessageDetails(candidate);
 
       console.log(`\n📧 Elaborazione: ${(messageDetails.subject || '').substring(0, 50)}...`);
@@ -299,6 +305,7 @@ class EmailProcessor {
       // il bot NON deve inviare un'altra risposta. Si attende il prossimo messaggio utente.
       // ====================================================================================================
       const lastMessage = messages[messages.length - 1];
+      const threadSnapshotLastId = lastMessage ? lastMessage.getId() : '';
       const lastSenderRaw = lastMessage.getFrom() || '';
       const lastSenderEmail = (this.gmailService && typeof this.gmailService._extractEmailAddress === 'function')
         ? this.gmailService._extractEmailAddress(lastSenderRaw).toLowerCase()
@@ -310,7 +317,7 @@ class EmailProcessor {
         knownAliases.some(alias => lastSenderEmail === alias.toLowerCase())
       );
 
-      if (lastSpeakerIsUs) {
+      if (lastSpeakerIsUs && !allowOwnLastWithPending) {
         console.log('   ⊖ Saltato: l\'ultimo messaggio del thread è già nostro (bot o segreteria)');
         // I messaggi esterni non letti precedenti sono già coperti dalla nostra ultima risposta.
         // Etichettarli evita che il thread rientri per sempre nella query Gmail.
@@ -842,8 +849,12 @@ class EmailProcessor {
         const errorToReport = initialError || generationError;
         const errorClass = errorToReport ? this._classifyError(errorToReport) : { type: 'UNKNOWN', retryable: false, message: 'Generation strategies exhausted' };
         console.error('🛑 TUTTE le strategie di generazione sono fallite.');
-        this._addErrorLabel(thread);
-        this._markMessageAsProcessed(candidate, labeledMessageIds);
+        if (!errorClass.retryable) {
+          this._safeAddErrorLabel_(thread);
+          this._markMessageAsProcessed(candidate, labeledMessageIds);
+        } else {
+          console.warn('↻ Errore temporaneo: nessuna label terminale applicata, il messaggio verrà ritentato.');
+        }
         result.status = 'error';
         result.error = errorToReport ? errorToReport.message : 'Generation strategies exhausted';
         if (initialError && generationError && initialError !== generationError) {
@@ -856,7 +867,7 @@ class EmailProcessor {
       // Controlla marcatore NO_REPLY
       if (typeof response !== 'string') {
         console.error(`🛑 Risposta non valida da Gemini: tipo ricevuto '${typeof response}'`);
-        this._addErrorLabel(thread);
+        this._safeAddErrorLabel_(thread);
         this._markMessageAsProcessed(candidate, labeledMessageIds);
         result.status = 'error';
         result.error = 'Invalid response type from GeminiService';
@@ -943,11 +954,24 @@ class EmailProcessor {
       }
 
       try {
+        const sendGuard = this._checkSendStillSafe_(
+          thread,
+          candidate,
+          ownAddresses,
+          threadSnapshotLastId,
+          allowOwnLastWithPending
+        );
+        if (!sendGuard.safe) {
+          console.warn(`   ⊖ Invio annullato: ${sendGuard.reason}`);
+          result.status = 'skipped';
+          result.reason = sendGuard.reason;
+          return result;
+        }
         this.gmailService.sendHtmlReply(candidate, response, messageDetails);
       } catch (e) {
         const errorMessage = e && e.message ? e.message : String(e);
         console.error(`   🛑 Errore invio Gmail: ${errorMessage}`);
-        this._addErrorLabel(thread);
+        this._safeAddErrorLabel_(thread);
         result.status = 'error';
         result.error = `gmail_send_failed: ${errorMessage}`;
         return result;
@@ -988,8 +1012,7 @@ class EmailProcessor {
 
       this.memoryService.updateMemoryAtomic(threadId, memoryUpdate, topicsWithObjects.length > 0 ? topicsWithObjects : null);
 
-      // La risposta copre tutti i messaggi esterni pendenti fino al candidato corrente.
-      externalUnread.forEach(message => this._markMessageAsProcessed(message, labeledMessageIds));
+      this._markMessageAsProcessed(candidate, labeledMessageIds);
       result.status = 'replied';
       result.durationMs = Date.now() - startTime;
       this.logger.info(`Thread processato in ${result.durationMs}ms`, { threadId: threadId, duration: result.durationMs });
@@ -997,7 +1020,7 @@ class EmailProcessor {
 
     } catch (error) {
       console.error(`   🛑 Errore elaborazione thread: ${error.message}`);
-      this._addErrorLabel(thread);
+      this._safeAddErrorLabel_(thread);
       result.status = 'error';
       result.error = error.message;
       return result;
@@ -1035,7 +1058,9 @@ class EmailProcessor {
     console.log('📬 Inizio elaborazione email...');
     console.log('='.repeat(70));
 
-    const executionLock = LockService.getScriptLock();
+    const executionLock = (typeof LockService.getUserLock === 'function')
+      ? LockService.getUserLock()
+      : LockService.getScriptLock();
     let lockAcquiredHere = false;
 
     // Nota: non rimuoviamo questo blocco. Serve quando processUnreadEmails è invocata
@@ -1065,19 +1090,23 @@ class EmailProcessor {
       // Cerca thread non letti nella inbox
       // Utilizziamo un buffer di ricerca più ampio per gestire thread saltati (es. loop interni)
       // Rimuoviamo il filtro etichetta per permettere la gestione dei follow-up in thread già elaborati
-      const processedLabelQuery = this._formatLabelQueryValue(this.config.labelName);
       const errorLabelQuery = this._formatLabelQueryValue(this.config.errorLabelName);
       const validationLabelQuery = this._formatLabelQueryValue(this.config.validationErrorLabel);
 
-      // La query esclude i thread già etichettati (il prefisso "-" è obbligatorio)
-      const searchQuery = `is:unread -label:${processedLabelQuery} -label:${errorLabelQuery} -label:${validationLabelQuery} in:inbox`;
+      // Non escludere IA a livello di query: Gmail propaga visivamente le label
+      // del singolo messaggio al thread e ciò nasconderebbe altri unread pendenti.
+      const searchQuery = `is:unread -label:${errorLabelQuery} -label:${validationLabelQuery} in:inbox`;
       const searchLimit = (this.config.searchPageSize || 50);
-
-      const threads = GmailApp.search(
-        searchQuery,
-        0,
-        searchLimit
-      );
+      const cursorProps = PropertiesService.getScriptProperties();
+      const cursorKey = 'EMAIL_SEARCH_PAGE_OFFSET';
+      let searchStart = parseInt(cursorProps.getProperty(cursorKey) || '0', 10) || 0;
+      let threads = GmailApp.search(searchQuery, searchStart, searchLimit);
+      if (threads.length === 0 && searchStart > 0) {
+        searchStart = 0;
+        threads = GmailApp.search(searchQuery, 0, searchLimit);
+      }
+      const nextOffset = threads.length < searchLimit ? 0 : searchStart + threads.length;
+      cursorProps.setProperty(cursorKey, String(nextOffset));
 
       if (threads.length === 0) {
         const emptyStreak = this._trackEmptyInboxStreak(true);
@@ -1167,7 +1196,28 @@ class EmailProcessor {
 
         console.log(`\n--- Thread ${index + 1}/${threads.length} ---`);
 
-        const result = this.processThread(thread, knowledgeBase, labeledMessageIds);
+        let result = this.processThread(thread, knowledgeBase, labeledMessageIds);
+        let repliesSent = result.status === 'replied' ? 1 : 0;
+
+        // Drena gli altri unread dello stesso thread nella stessa esecuzione.
+        // Dopo la prima risposta l'ultimo speaker siamo noi, ma sappiamo che
+        // restano messaggi distinti non etichettati e li gestiamo esplicitamente.
+        while (
+          !this.config.dryRun &&
+          result.status === 'replied' &&
+          this._hasUnreadMessagesToProcess(thread, labeledMessageIds) &&
+          !this._isNearDeadline(MAX_EXECUTION_TIME)
+        ) {
+          const nextResult = this.processThread(thread, knowledgeBase, labeledMessageIds, false, true);
+          if (nextResult.status !== 'replied') {
+            if (nextResult.status === 'error') stats.errors++;
+            if (nextResult.status === 'validation_failed') stats.validationFailed++;
+            break;
+          }
+          repliesSent++;
+          result = nextResult;
+        }
+        result.repliesSent = repliesSent;
         stats.total++;
 
         // Incrementa contatore solo se c'è stata un'azione significativa o decisione esplicita dell'AI
@@ -1185,7 +1235,7 @@ class EmailProcessor {
         if (result.validationFailed) {
           stats.validationFailed++;
         } else if (result.status === 'replied') {
-          stats.replied++;
+          stats.replied += Math.max(1, result.repliesSent || 1);
           if (result.dryRun) stats.dryRun++;
         } else if (result.status === 'skipped') {
           stats.skipped++;
@@ -1405,6 +1455,39 @@ class EmailProcessor {
 
   _addErrorLabel(thread) {
     this.gmailService.addLabelToThread(thread, this.config.errorLabelName);
+  }
+
+  _safeAddErrorLabel_(thread) {
+    try {
+      this._addErrorLabel(thread);
+      return true;
+    } catch (e) {
+      console.error(`⚠️ Impossibile applicare la label errore: ${e.message}`);
+      return false;
+    }
+  }
+
+  _checkSendStillSafe_(thread, candidate, ownAddresses, expectedLastMessageId, allowOwnLastWithPending) {
+    try {
+      const refreshed = thread.getMessages() || [];
+      if (refreshed.length === 0) return { safe: false, reason: 'thread_empty_before_send' };
+      const last = refreshed[refreshed.length - 1];
+      if (!last || last.getId() !== expectedLastMessageId) {
+        return { safe: false, reason: 'thread_changed_before_send' };
+      }
+      const processedIds = this.gmailService.getMessageIdsWithLabel(this.config.labelName, true);
+      if (processedIds && processedIds.has(candidate.getId())) {
+        return { safe: false, reason: 'candidate_already_processed_before_send' };
+      }
+      const lastSender = this.gmailService._extractEmailAddress(last.getFrom() || '').toLowerCase();
+      if (!allowOwnLastWithPending && lastSender && ownAddresses && ownAddresses.has(lastSender)) {
+        return { safe: false, reason: 'human_or_bot_replied_before_send' };
+      }
+      return { safe: true };
+    } catch (e) {
+      // Un controllo d'idempotenza non riuscito non autorizza un invio cieco.
+      return { safe: false, reason: `send_guard_failed: ${e.message}` };
+    }
   }
 
   _addValidationErrorLabel(thread) {

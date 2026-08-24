@@ -154,7 +154,11 @@ function setupControlloSheet(ss) {
   sheet.getRange('E6').setValue('Segretario:').setFontWeight('bold');
   sheet.getRange('E7').setValue('Oggi:').setFontWeight('bold');
   sheet.getRange('E8').setValue('Motivo:').setFontWeight('bold');
-  // Sospensione oraria rimossa
+  // PRESENZA SEGRETERIA: durante queste fasce il bot resta sospeso.
+  sheet.getRange('A9').setValue('Presenza segreteria').setFontWeight('bold');
+  sheet.getRange('B9').setValue('dalle').setFontWeight('bold');
+  sheet.getRange('D9').setValue('alle').setFontWeight('bold');
+  sheet.getRange('A10:A16').setValues(UI_CONFIG.DAYS.map(day => [day]));
 
   // Filtri nella stessa pagina
   safeMerge(sheet.getRange('E9:F9'));
@@ -341,7 +345,23 @@ function applyControlloInputConstraints_(sheet) {
     'La data fine deve essere uguale o successiva alla data inizio.'
   );
 
-  // Orari sospensione rimossi
+  // Fasce di presenza segreteria (sospensione autoresponder)
+  const timeRule = SpreadsheetApp.newDataValidation()
+    .requireTime()
+    .setAllowInvalid(false)
+    .setHelpText('Inserisci un orario valido (HH:mm).')
+    .build();
+  ['B10:B16', 'D10:D16'].forEach(a1 => {
+    sheet.getRange(a1).setDataValidation(timeRule).setNumberFormat('HH:mm');
+  });
+  const startRange = sheet.getRange('B10:B16');
+  const endRange = sheet.getRange('D10:D16');
+  if (startRange.getDisplayValues().every(row => !row[0])) {
+    startRange.setValues(UI_CONFIG.DAYS.map(() => [9 / 24]));
+  }
+  if (endRange.getDisplayValues().every(row => !row[0])) {
+    endRange.setValues(UI_CONFIG.DAYS.map(() => [13 / 24]));
+  }
 
   // Filtri domini/keyword direttamente su Controllo
   const domainRule = SpreadsheetApp.newDataValidation()
@@ -368,10 +388,31 @@ function applyControlloInputConstraints_(sheet) {
  * @param {string[]} rangesA1
  */
 function protectRangesWithWarning_(sheet, rangesA1) {
+  const prefix = 'Area protetta setup UI: ';
+  let existing = [];
+  try {
+    existing = sheet.getProtections(SpreadsheetApp.ProtectionType.RANGE) || [];
+  } catch (e) {
+    console.warn(`⚠️ Lettura protezioni esistenti fallita: ${e.message}`);
+  }
+
   rangesA1.forEach(a1 => {
     const range = sheet.getRange(a1);
-    const protection = range.protect();
+    const description = prefix + a1;
+    const matches = existing.filter(protection => {
+      try { return protection.getDescription() === description; } catch (e) { return false; }
+    });
+    const protection = matches.shift() || range.protect();
     protection.setWarningOnly(true);
-    protection.setDescription('Area protetta setup UI: ' + a1);
+    protection.setDescription(description);
+
+    // Rimuove soltanto duplicati creati da questo setup, mai protezioni utente.
+    matches.forEach(duplicate => {
+      try {
+        if ((!duplicate.canEdit || duplicate.canEdit()) && duplicate.remove) duplicate.remove();
+      } catch (e) {
+        console.warn(`⚠️ Protezione duplicata non rimossa (${a1}): ${e.message}`);
+      }
+    });
   });
 }

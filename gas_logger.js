@@ -116,17 +116,18 @@ Script ID: ${this.config.SCRIPT_ID || 'Unknown'}
       `.trim();
 
       // Rate limit: max 1 email ogni 5 minuti
-      const lastNotification = PropertiesService.getScriptProperties()
-        .getProperty('last_error_notification');
       const now = Date.now();
       
       const lock = LockService.getScriptLock();
       if (lock.tryLock(3000)) {
         try {
+          // Lettura e scrittura devono stare nello stesso lock: leggere prima
+          // consentiva a due esecuzioni concorrenti di inviare entrambe.
+          const scriptProps = PropertiesService.getScriptProperties();
+          const lastNotification = scriptProps.getProperty('last_error_notification');
           if (!lastNotification || (now - parseInt(lastNotification)) > 300000) {
             GmailApp.sendEmail(adminEmail, subject, body);
-            PropertiesService.getScriptProperties()
-              .setProperty('last_error_notification', now.toString());
+            scriptProps.setProperty('last_error_notification', now.toString());
           }
         } finally {
           lock.releaseLock();

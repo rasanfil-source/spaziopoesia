@@ -368,7 +368,8 @@ class GmailService {
             : {};
         const settings = Object.assign({
             maxFiles: 4,
-            maxBytesPerFile: 5 * 1024 * 1024
+            maxBytesPerFile: 5 * 1024 * 1024,
+            maxInlinePayloadBytes: 18 * 1024 * 1024
         }, defaults, options);
 
         const result = {
@@ -391,7 +392,8 @@ class GmailService {
         }
         console.log(`   📎 Allegati trovati: ${attachments.length}`);
 
-        let filesConsidered = 0;
+        let filesProcessed = 0;
+        let inlinePayloadBytes = 0;
         for (const attachment of attachments) {
             const name = attachment.getName ? (attachment.getName() || 'allegato') : 'allegato';
 
@@ -401,11 +403,10 @@ class GmailService {
                 continue;
             }
 
-            if (filesConsidered >= settings.maxFiles) {
+            if (filesProcessed >= settings.maxFiles) {
                 result.skipped.push({ name: name, reason: 'max_files' });
                 continue;
             }
-            filesConsidered++;
 
             const size = attachment.getSize ? attachment.getSize() : 0;
             if (size > settings.maxBytesPerFile) {
@@ -420,6 +421,7 @@ class GmailService {
                 try {
                     const text = attachment.getDataAsString();
                     result.textContext += `\n\n--- Contenuto file: ${name} ---\n${text.substring(0, 5000)}`;
+                    filesProcessed++;
                     console.log(`   📄 Testo estratto da: ${name} (${text.length} caratteri)`);
                 } catch (e) {
                     result.skipped.push({ name: name, reason: 'text_extract_error', error: e.message });
@@ -429,7 +431,14 @@ class GmailService {
 
             // PDF/Immagini → Blob diretto per Gemini Vision inlineData
             if (mimeType.startsWith('image/') || mimeType === 'application/pdf') {
+                const encodedSize = Math.ceil(size / 3) * 4;
+                if (inlinePayloadBytes + encodedSize > settings.maxInlinePayloadBytes) {
+                    result.skipped.push({ name: name, reason: 'max_inline_payload', size: size });
+                    continue;
+                }
                 result.blobs.push(attachment.copyBlob());
+                inlinePayloadBytes += encodedSize;
+                filesProcessed++;
                 console.log(`   🖼️ Blob multimodale preparato: ${name} (${mimeType}, ${Math.round(size / 1024)}KB)`);
                 continue;
             }
@@ -443,8 +452,16 @@ class GmailService {
                     console.log(`   🔄 Conversione al volo in PDF per: ${name}`);
                     const convertedPdf = this._convertOfficeToPdf(attachment);
                     if (convertedPdf) {
+                        const convertedSize = convertedPdf.getBytes ? convertedPdf.getBytes().length : size;
+                        const encodedSize = Math.ceil(convertedSize / 3) * 4;
+                        if (inlinePayloadBytes + encodedSize > settings.maxInlinePayloadBytes) {
+                            result.skipped.push({ name: name, reason: 'max_inline_payload', size: convertedSize });
+                            continue;
+                        }
                         convertedPdf.setName(`${name}.pdf`);
                         result.blobs.push(convertedPdf);
+                        inlinePayloadBytes += encodedSize;
+                        filesProcessed++;
                         console.log(`   ✓ Convertito e pronto: ${name}.pdf`);
                     } else {
                         result.skipped.push({ name: name, reason: 'conversion_failed' });
@@ -935,7 +952,14 @@ class GmailService {
                 return;
 
             } catch (apiError) {
-                console.warn(`⚠️ Gmail API fallita, ripiego su GmailApp: ${apiError.message}`);
+                const apiMessage = apiError && apiError.message ? apiError.message : String(apiError);
+                // Timeout/5xx possono avvenire dopo l'accettazione lato Gmail: un
+                // fallback immediato rischia una seconda risposta. Ripieghiamo
+                // soltanto su errori deterministici che precedono l'accettazione.
+                if (!/\b(400|401|403)\b|invalid argument|permission denied/i.test(apiMessage)) {
+                    throw new Error(`Invio Gmail con esito incerto, fallback bloccato: ${apiMessage}`);
+                }
+                console.warn(`⚠️ Gmail API rifiutata prima dell'invio, ripiego su GmailApp: ${apiMessage}`);
             }
         }
 

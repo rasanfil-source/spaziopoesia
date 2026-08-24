@@ -81,8 +81,21 @@ class RequestTypeClassifier {
       parish_info_request: Math.min(parishResult.score / SATURATION_POINT, 1.0)
     };
 
+    const hint = externalHint && typeof externalHint === 'object' ? externalHint : null;
+    const hintCategory = hint ? String(hint.category || '').toUpperCase() : '';
+    const hintDimensions = hint && hint.dimensions && typeof hint.dimensions === 'object'
+      ? hint.dimensions : {};
+    const hintConfidence = hint && typeof hint.confidence === 'number' ? hint.confidence : 0;
+    dimensions.pastoral = Number(hintDimensions.pastoral) || (hintCategory === 'PASTORAL' ? hintConfidence : 0);
+    dimensions.formal = Number(hintDimensions.formal) || (hintCategory === 'FORMAL' ? hintConfidence : 0);
+    dimensions.technical = Number(hintDimensions.technical) || (hintCategory === 'TECHNICAL' ? hintConfidence : 0);
+    dimensions.poem_submission = Math.max(
+      dimensions.poem_submission,
+      Number(hintDimensions.poetry) || (hintCategory === 'POETRY' ? hintConfidence : 0)
+    );
+
     // 3. Determinazione Tipo Primario
-    let requestType = 'poem_submission';
+    let requestType = null;
 
     if (dimensions.parish_info_request >= 0.6 && dimensions.parish_info_request > dimensions.poem_submission && dimensions.parish_info_request >= dimensions.information_request) {
       requestType = 'parish_info_request';
@@ -90,9 +103,13 @@ class RequestTypeClassifier {
       requestType = 'information_request';
     } else if (dimensions.poem_submission >= 0.6) {
       requestType = 'poem_submission';
-    } else {
-      // Caso dubbio, default a invio poesia
+    } else if (hintCategory === 'POETRY') {
       requestType = 'poem_submission';
+    } else if (['TECHNICAL', 'PASTORAL', 'FORMAL', 'MIXED'].includes(hintCategory)) {
+      requestType = 'information_request';
+    } else {
+      // In assenza di segnali non inventiamo un invio poesia.
+      requestType = 'information_request';
     }
 
     // 4. Calcolo Metriche Derivate
@@ -109,7 +126,7 @@ class RequestTypeClassifier {
 
     const result = {
       type: requestType, // Categoria classica
-      source: 'regex',
+      source: hintCategory ? 'regex+gemini' : 'regex',
       dimensions: dimensions, // Nuova metrica
       complexity: complexity,
       suggestedTone: suggestedTone,

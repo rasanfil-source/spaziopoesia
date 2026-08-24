@@ -127,6 +127,7 @@ if (typeof process !== 'undefined' && typeof require !== 'undefined') {
     [
         'gas_config.js',
         'gas_main.js',
+        'gas_setup_ui.js',
         'gas_error_types.js',
         'gas_rate_limiter.js',
         'gas_memory_service.js',
@@ -523,6 +524,209 @@ function runAllTests() {
         test('Export metriche senza configurazione termina senza creare dati', results, () => {
             const result = exportMetricsToSheet();
             return result.exported === false && result.reason === 'metrics_sheet_not_configured';
+        });
+    });
+
+    // 11. Regressioni audit completo (escluso il controllo allucinazioni concordato)
+    testGroup('Punto #11: Regressioni audit - concorrenza, Gmail, UI e classificazione', results, () => {
+        test('Due RateLimiter concorrenti sommano contatori e finestre', results, () => {
+            const props = PropertiesService.getScriptProperties();
+            props.setProperties({ rpd_audit_model: '0', rpd_date_audit_model: '2026-08-24', tokens_audit_model: '0', rpm_window: '[]', tpm_window: '[]', rate_limit_date: '2026-08-24' });
+            const first = new GeminiRateLimiter();
+            const second = new GeminiRateLimiter();
+            [first, second].forEach(limiter => {
+                limiter.models = { audit_model: { name: 'audit-physical', rpm: 10, tpm: 10000, rpd: 1500 } };
+                limiter._getPacificDate = () => '2026-08-24';
+                limiter._trackRequest('audit_model', 100, 1);
+            });
+            first.flush();
+            second.flush();
+            const rpm = JSON.parse(props.getProperty('rpm_window') || '[]').filter(entry => entry.modelKey === 'audit_model');
+            return props.getProperty('rpd_audit_model') === '2' && rpm.length === 2;
+        });
+
+        test('Disponibilità RPD considera gli incrementi dirty locali', results, () => {
+            const limiter = new GeminiRateLimiter();
+            limiter.models = { only: { name: 'only-model', rpm: 10, tpm: 10000, rpd: 2 } };
+            limiter.allProps = { rpd_only: '1', rpd_date_only: '2026-08-24' };
+            limiter.dirtyProps = { rpd_only: '2' };
+            limiter.cache.rpmWindow = [];
+            limiter.cache.tpmWindow = [];
+            return limiter._validateModelAvailability('only', 1).reason === 'rpd_exhausted';
+        });
+
+        test('Reset giornaliero conserva le finestre mobili RPM/TPM', results, () => {
+            const props = PropertiesService.getScriptProperties();
+            props.setProperties({ rpm_window: '[{"timestamp":1}]', tpm_window: '[{"timestamp":1}]' });
+            const limiter = new GeminiRateLimiter();
+            limiter._resetDailyCounters();
+            return props.getProperty('rpm_window') === '[{"timestamp":1}]' && props.getProperty('tpm_window') === '[{"timestamp":1}]';
+        });
+
+        test('Quick-check tenta la backup key una sola volta', results, () => {
+            const service = new GeminiService();
+            service.backupKey = 'backup-key-abcdefghijklmnopqrstuvwxyz';
+            let calls = 0;
+            service.fetchFn = () => {
+                calls++;
+                return { getResponseCode: () => 503, getContentText: () => 'unavailable' };
+            };
+            try { service._quickCheckWithModel('testo', 'oggetto', service.modelName); } catch (e) { }
+            return calls === 2;
+        });
+
+        test('Quick-check rifiuta schema vuoto e finishReason MAX_TOKENS', results, () => {
+            const service = new GeminiService();
+            service.backupKey = null;
+            let payload = '{}';
+            let finishReason = 'STOP';
+            service.fetchFn = () => ({
+                getResponseCode: () => 200,
+                getContentText: () => JSON.stringify({ candidates: [{ finishReason, content: { parts: [{ text: payload }] } }] })
+            });
+            const emptySchema = service._quickCheckWithModel('testo', 'oggetto', service.modelName);
+            payload = JSON.stringify({ reply_needed: true, language: 'it', category: 'TECHNICAL', dimensions: { technical: 1, pastoral: 0, poetry: 0, formal: 0 } });
+            finishReason = 'MAX_TOKENS';
+            const truncated = service._quickCheckWithModel('testo', 'oggetto', service.modelName);
+            return emptySchema.indeterminate === true && truncated.indeterminate === true;
+        });
+
+        test('Config senza Controllo conserva blacklist statiche', results, () => {
+            const loaded = _loadAdvancedConfig({ getSheetByName: () => null });
+            return loaded.ignoreDomains.length === CONFIG.IGNORE_DOMAINS.length && loaded.ignoreKeywords.length === CONFIG.IGNORE_KEYWORDS.length;
+        });
+
+        test('Calendario sospende in orario ma non durante un’assenza', results, () => {
+            const monday = new Date(2026, 7, 24, 10, 0, 0);
+            const base = { suspensionRules: { 'lunedì': { startMinutes: 540, endMinutes: 780 } }, vacationPeriods: [] };
+            const suspended = _isAutoresponderSuspended_(base, monday);
+            const vacation = Object.assign({}, base, { vacationPeriods: [{ start: monday.getTime() - 1000, end: monday.getTime() + 1000 }] });
+            return suspended === true && _isAutoresponderSuspended_(vacation, monday) === false;
+        });
+
+        test('Allegato grande non consuma maxFiles prima di un PDF valido', results, () => {
+            const service = new GmailService();
+            const makeAttachment = (name, type, size) => ({
+                getName: () => name, getContentType: () => type, getSize: () => size,
+                copyBlob: () => ({ getBytes: () => new Array(size), setName: () => { } }),
+                getBytes: () => []
+            });
+            const message = { getAttachments: () => [makeAttachment('grande.bin', 'application/octet-stream', 999), makeAttachment('valido.pdf', 'application/pdf', 10)] };
+            const out = service.getProcessableAttachments(message, { maxFiles: 1, maxBytesPerFile: 100, maxInlinePayloadBytes: 1000 });
+            return out.blobs.length === 1 && out.skipped.some(item => item.name === 'grande.bin' && item.reason === 'too_large');
+        });
+
+        test('Budget cumulativo Base64 blocca allegati oltre soglia', results, () => {
+            const service = new GmailService();
+            const attachment = name => ({ getName: () => name, getContentType: () => 'application/pdf', getSize: () => 10, copyBlob: () => ({}) });
+            const out = service.getProcessableAttachments({ getAttachments: () => [attachment('a.pdf'), attachment('b.pdf')] }, { maxFiles: 4, maxBytesPerFile: 100, maxInlinePayloadBytes: 20 });
+            return out.blobs.length === 1 && out.skipped.some(item => item.reason === 'max_inline_payload');
+        });
+
+        test('Filtri locali non scartano malattia poetica o parole contenenti perfetto', results, () => {
+            const classifier = new Classifier();
+            return classifier.classifyEmail('Poesia', 'Una poesia sulla malattia').shouldReply === true &&
+                classifier.classifyEmail('Riflessione', 'amore imperfetto').shouldReply === true;
+        });
+
+        test('Hint Gemini tecnico evita il default poem_submission', results, () => {
+            const classifier = new RequestTypeClassifier();
+            const out = classifier.classify('Richiesta', 'Avrei bisogno di aiuto', { category: 'TECHNICAL', confidence: 0.9, dimensions: { technical: 0.9, pastoral: 0, poetry: 0, formal: 0 } });
+            return out.type === 'information_request' && out.source === 'regex+gemini';
+        });
+
+        test('Testo breve senza evidenza non ottiene certezza linguistica massima', results, () => {
+            const service = new GeminiService();
+            return service.detectEmailLanguage('Hi', '').safetyGrade === 1;
+        });
+
+        test('Intervallo trigger invalido non cancella il trigger esistente', results, () => {
+            const oldScriptApp = global.ScriptApp;
+            let deleted = 0;
+            try {
+                global.ScriptApp = { getProjectTriggers: () => [], deleteTrigger: () => { deleted++; }, newTrigger: () => { throw new Error('non deve creare'); } };
+                let threw = false;
+                try { setupMainTrigger(2); } catch (e) { threw = /non valido/.test(e.message); }
+                return threw && deleted === 0;
+            } finally { global.ScriptApp = oldScriptApp; }
+        });
+
+        test('Protezioni setup sono idempotenti', results, () => {
+            const oldType = SpreadsheetApp.ProtectionType;
+            const protections = [];
+            const makeProtection = () => ({
+                description: '', removed: false,
+                getDescription() { return this.description; },
+                setDescription(value) { this.description = value; return this; },
+                setWarningOnly() { return this; }, canEdit: () => true,
+                remove() { this.removed = true; }
+            });
+            const sheet = {
+                getProtections: () => protections.filter(item => !item.removed),
+                getRange: () => ({ protect: () => { const p = makeProtection(); protections.push(p); return p; } })
+            };
+            try {
+                SpreadsheetApp.ProtectionType = { RANGE: 'RANGE' };
+                protectRangesWithWarning_(sheet, ['A1:B1']);
+                protectRangesWithWarning_(sheet, ['A1:B1']);
+                return protections.filter(item => !item.removed).length === 1;
+            } finally { SpreadsheetApp.ProtectionType = oldType; }
+        });
+
+        test('Guard invio accetta snapshot stabile e blocca nuovi messaggi', results, () => {
+            const processor = Object.create(EmailProcessor.prototype);
+            processor.config = { labelName: 'IA' };
+            processor.gmailService = {
+                getMessageIdsWithLabel: () => new Set(),
+                _extractEmailAddress: raw => String(raw || '').replace(/[<>]/g, '').trim()
+            };
+            const candidate = { getId: () => 'old', getFrom: () => 'user@example.com' };
+            const newest = { getId: () => 'snapshot-last', getFrom: () => 'other@example.com' };
+            const messages = [candidate, newest];
+            const thread = { getMessages: () => messages.slice() };
+            const stable = processor._checkSendStillSafe_(thread, candidate, new Set(['bot@example.com']), 'snapshot-last', false);
+            messages.push({ getId: () => 'human-new', getFrom: () => 'human@example.com' });
+            const changed = processor._checkSendStillSafe_(thread, candidate, new Set(['bot@example.com']), 'snapshot-last', false);
+            return stable.safe === true && changed.safe === false && changed.reason === 'thread_changed_before_send';
+        });
+
+        test('Errore Gmail ambiguo non attiva reply fallback duplicante', results, () => {
+            const service = new GmailService();
+            const oldGmail = global.Gmail;
+            const oldWebSafe = Utilities.base64EncodeWebSafe;
+            const oldCharset = Utilities.Charset;
+            let fallbackCalls = 0;
+            try {
+                global.Gmail = { Users: { Messages: { send: () => { throw new Error('timeout 504 after upload'); } } } };
+                Utilities.base64EncodeWebSafe = value => Buffer.from(String(value)).toString('base64url');
+                Utilities.Charset = { UTF_8: 'UTF-8' };
+                const resource = {
+                    getId: () => 'message-id',
+                    getThread: () => ({ getId: () => 'thread-id' }),
+                    reply: () => { fallbackCalls++; }
+                };
+                let blocked = false;
+                try {
+                    service.sendHtmlReply(resource, 'Risposta', {
+                        senderName: 'Mario', senderEmail: 'mario@example.com', subject: 'Oggetto',
+                        rfc2822MessageId: '<original@example.com>', existingReferences: '', recipientEmail: 'bot@example.com', recipientCc: ''
+                    });
+                } catch (e) {
+                    blocked = /esito incerto/.test(e.message);
+                }
+                return blocked && fallbackCalls === 0;
+            } finally {
+                global.Gmail = oldGmail;
+                Utilities.base64EncodeWebSafe = oldWebSafe;
+                Utilities.Charset = oldCharset;
+            }
+        });
+
+        test('Cache semantica distingue email originali diverse', results, () => {
+            const semantic = Object.create(SemanticValidator.prototype);
+            const first = semantic._cacheKey('halluc', 'rispostakbemail-A');
+            const second = semantic._cacheKey('halluc', 'rispostakbemail-B');
+            return first !== second;
         });
     });
 

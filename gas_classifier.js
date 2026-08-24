@@ -369,8 +369,9 @@ class Classifier {
     if (wordCount > 3) return false;
 
     // Deve contenere parola di ringraziamento/ricevuto
+    const words = normalized.split(' ').filter(Boolean);
     const thankWords = ['grazie', 'ringrazio', 'ricevuto', 'ok', 'perfetto'];
-    const hasThanks = thankWords.some(word => normalized.includes(word));
+    const hasThanks = thankWords.some(word => words.includes(word));
 
     return hasThanks && wordCount <= 3;
   }
@@ -388,8 +389,8 @@ class Classifier {
       /\bsono\s+in\s+ferie\b/i,
       /\bassen[tz]a\s+per\s+ferie\b/i,
       /\bnon\s+sono\s+in\s+ufficio\b/i,
-      /\bmalattia\b/i,
-      /\bvacc?anze\b/i
+      /\bsono\s+(?:assente|in malattia|in vacan[tz]a)\b/i,
+      /\btorner[oò]\s+(?:in ufficio|disponibile)\b/i
     ];
 
     return oooPatterns.some(pattern => pattern.test(normalized));

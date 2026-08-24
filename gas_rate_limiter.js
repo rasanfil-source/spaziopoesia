@@ -95,6 +95,11 @@ class GeminiRateLimiter {
     // ⚠️ OTTIMIZZAZIONE: Caricamento batch iniziale per evitare PropertiesService.getProperty() ripetuti.
     this.allProps = this.props.getProperties() || {};
     this.dirtyProps = {};
+    // Le istanze RateLimiter possono convivere nella stessa esecuzione (generazione
+    // e validazione semantica). Conserviamo i delta, non soltanto uno snapshot
+    // assoluto, così il flush può sommarli allo stato più recente sotto lock.
+    this.pendingCounterDeltas = {};
+    this.cacheDirty = false;
 
     // Sincronizza cache con stato persistito iniziale
     this.cache.rpmWindow = this._safeParseJson(this.allProps['rpm_window'], []);
@@ -216,10 +221,12 @@ class GeminiRateLimiter {
       this.props.setProperty(`rpd_${modelKey}`, '0');
       this.props.setProperty(`rpd_date_${modelKey}`, todayPacific);
       this.props.setProperty(`tokens_${modelKey}`, '0');
+      this.allProps[`rpd_${modelKey}`] = '0';
+      this.allProps[`rpd_date_${modelKey}`] = todayPacific;
+      this.allProps[`tokens_${modelKey}`] = '0';
     }
-    // Reset anche cache
-    this.props.setProperty('rpm_window', JSON.stringify([]));
-    this.props.setProperty('tpm_window', JSON.stringify([]));
+    // RPM/TPM sono finestre mobili di 60 secondi e non appartengono al giorno
+    // Pacific: azzerarle a mezzanotte ammetterebbe burst oltre quota.
     console.log('✓ Contatori giornalieri resettati');
   }
 
@@ -283,11 +290,6 @@ class GeminiRateLimiter {
     const forceModel = options.forceModel || null;
     const estimatedTokens = options.estimatedTokens || 1000;
 
-    // Override manuale
-    if (forceModel && this.models[forceModel]) {
-      return this._validateModelAvailability(forceModel, estimatedTokens);
-    }
-
     // Usa strategia da CONFIG (o fallback)
     // Aggiunge 'classification' come alias di 'quick_check' se non definito
     const taskStrategies = Object.assign({}, this.strategies);
@@ -295,7 +297,9 @@ class GeminiRateLimiter {
       taskStrategies['classification'] = taskStrategies['quick_check'] || ['flash-lite', 'flash-3.7'];
     }
 
-    const candidates = taskStrategies[taskType] || taskStrategies['fallback'] || ['flash-lite', 'flash-3.7'];
+    const candidates = (forceModel && this.models[forceModel])
+      ? [forceModel]
+      : (taskStrategies[taskType] || taskStrategies['fallback'] || ['flash-lite', 'flash-3.7']);
 
     // Trova primo modello disponibile (Punto 11: Protezione con lock per atomicità check+use)
     const lock = LockService.getScriptLock();
@@ -362,7 +366,7 @@ class GeminiRateLimiter {
 
     for (const key of Object.keys(this.models)) {
       if (this.models[key].name === physicalModelName) {
-        rpdUsed += parseInt(this.props.getProperty(`rpd_${key}`) || '0', 10) || 0;
+        rpdUsed += parseInt(this._getProp(`rpd_${key}`) || '0', 10) || 0;
         rpmUsed += this._getRequestsInWindow('rpm', key);
         tpmUsed += this._getTokensInWindow('tpm', key);
       }
@@ -488,7 +492,8 @@ class GeminiRateLimiter {
     // 1. Selezione modello standard
     const selection = this.selectModel(taskType, {
       preferQuality: preferQuality,
-      estimatedTokens: estimatedTokens
+      estimatedTokens: estimatedTokens,
+      forceModel: options.forceModel || null
     });
 
     if (!selection.available) {
@@ -574,8 +579,16 @@ class GeminiRateLimiter {
    * Non influisce sui token ma consuma RPD
    */
   trackAuxiliaryRequest(modelKey, tokensUsed, reason) {
-    console.log(`📊 Tracciamento richiesta ausiliaria (${reason || 'aux'}): ${modelKey}`);
-    this._trackRequest(modelKey, tokensUsed || 0, 0);
+    const logicalKey = this.models[modelKey]
+      ? modelKey
+      : Object.keys(this.models).find(key => this.models[key].name === modelKey);
+    if (!logicalKey) {
+      console.warn(`⚠️ Richiesta ausiliaria non tracciata: modello sconosciuto ${modelKey}`);
+      return false;
+    }
+    console.log(`📊 Tracciamento richiesta ausiliaria (${reason || 'aux'}): ${logicalKey}`);
+    this._trackRequest(logicalKey, tokensUsed || 0, 0);
+    return true;
   }
 
   /**
@@ -653,6 +666,8 @@ class GeminiRateLimiter {
     this._setProp(rpdKey, String(nextRpd));
     this._setProp(tokensKey, String(nextTokens));
     this._setProp(rpdDateKey, todayPacific);
+    this.pendingCounterDeltas[rpdKey] = (this.pendingCounterDeltas[rpdKey] || 0) + 1;
+    this.pendingCounterDeltas[tokensKey] = (this.pendingCounterDeltas[tokensKey] || 0) + (tokensUsed || 0);
 
     return { rpd: nextRpd, tokens: nextTokens };
   }
@@ -663,15 +678,17 @@ class GeminiRateLimiter {
     // Aggiungi a cache in memoria
     const cacheKey = windowType + 'Window';
     this.cache[cacheKey].push(entry);
+    this.cacheDirty = true;
 
     // Pulisci vecchie entry (>60 secondi)
     this.cache[cacheKey] = this.cache[cacheKey].filter(function (e) {
       return now - e.timestamp < 60000;
     });
 
-    // Limita dimensioni array (max 100 per finestra)
-    if (this.cache[cacheKey].length > 100) {
-      this.cache[cacheKey] = this.cache[cacheKey].slice(-100);
+    // I modelli consentono al massimo poche decine di RPM. Il cap a 50 tiene
+    // ogni proprietà ampiamente sotto il limite di 9 KB di ScriptProperties.
+    if (this.cache[cacheKey].length > 50) {
+      this.cache[cacheKey] = this.cache[cacheKey].slice(-50);
     }
   }
 
@@ -681,35 +698,62 @@ class GeminiRateLimiter {
    */
   flush() {
     const keys = Object.keys(this.dirtyProps);
-    const hasCacheChanges = true; // Assumiamo sempre RPM/TPM aggiornati in una run
-
-    if (keys.length === 0 && !hasCacheChanges) return;
+    if (keys.length === 0 && !this.cacheDirty) return;
 
     const lock = LockService.getScriptLock();
     if (lock.tryLock(10000)) {
       try {
         console.log(`💾 Persistenza differita Rate Limiter: salvataggio proprietà...`);
 
-        // 1. Sincronizza finestre RPM/TPM
-        this.dirtyProps['rpm_window'] = JSON.stringify(this.cache.rpmWindow);
-        this.dirtyProps['tpm_window'] = JSON.stringify(this.cache.tpmWindow);
+        const persisted = this.props.getProperties() || {};
+        const now = Date.now();
+        const persistedRpm = this._safeParseJson(persisted.rpm_window, []);
+        const persistedTpm = this._safeParseJson(persisted.tpm_window, []);
+        const mergedRpm = this._mergeWindowData(persistedRpm, this.cache.rpmWindow || [])
+          .filter(entry => now - entry.timestamp < 60000).slice(-50);
+        const mergedTpm = this._mergeWindowData(persistedTpm, this.cache.tpmWindow || [])
+          .filter(entry => now - entry.timestamp < 60000).slice(-50);
+
+        const writes = Object.assign({}, this.dirtyProps, {
+          rpm_window: JSON.stringify(mergedRpm),
+          tpm_window: JSON.stringify(mergedTpm)
+        });
+
+        // Trasforma gli snapshot locali dei contatori in incrementi applicati
+        // allo stato persistito più recente, evitando lost update fra istanze.
+        Object.keys(this.pendingCounterDeltas).forEach(key => {
+          const modelKey = key.startsWith('rpd_')
+            ? key.substring('rpd_'.length)
+            : (key.startsWith('tokens_') ? key.substring('tokens_'.length) : '');
+          const targetDate = modelKey ? writes[`rpd_date_${modelKey}`] : null;
+          const persistedDate = modelKey ? persisted[`rpd_date_${modelKey}`] : null;
+          const sameQuotaDay = !modelKey || !targetDate || persistedDate === targetDate;
+          const persistedValue = sameQuotaDay ? (parseInt(persisted[key] || '0', 10) || 0) : 0;
+          writes[key] = String(persistedValue + this.pendingCounterDeltas[key]);
+        });
 
         // 2. Checkpoint WAL (per sicurezza batch)
         const wal = {
           timestamp: Date.now(),
-          rpm: this.cache.rpmWindow.slice(),
-          tpm: this.cache.tpmWindow.slice()
+          rpm: mergedRpm,
+          tpm: mergedTpm
         };
-        this.dirtyProps['rate_limit_wal'] = JSON.stringify(wal);
+        writes.rate_limit_wal = JSON.stringify(wal);
 
         // 3. Scrittura batch atomica
-        this.props.setProperties(this.dirtyProps);
+        this.props.setProperties(writes);
 
         // 4. Rimuovi WAL
         this.props.deleteProperty('rate_limit_wal');
 
         // Reset stato dirty
+        this.allProps = Object.assign({}, persisted, writes);
+        delete this.allProps.rate_limit_wal;
+        this.cache.rpmWindow = mergedRpm;
+        this.cache.tpmWindow = mergedTpm;
         this.dirtyProps = {};
+        this.pendingCounterDeltas = {};
+        this.cacheDirty = false;
         console.log('✅ Persistenza completata.');
       } catch (e) {
         console.error(`❌ Errore durante flush Rate Limiter: ${e.message}`);
@@ -836,7 +880,7 @@ class GeminiRateLimiter {
     // Ordina per timestamp e limita
     return merged
       .sort((a, b) => a.timestamp - b.timestamp)
-      .slice(-100);
+      .slice(-50);
   }
 
   _getRequestsInWindow(type, modelKey) {

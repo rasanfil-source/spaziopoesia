@@ -1152,20 +1152,22 @@ class MemoryService {
     if (!this._initialized) return 0;
 
     try {
-      const data = this._sheet.getDataRange().getValues();
-      const cutoffDate = new Date();
-      cutoffDate.setDate(cutoffDate.getDate() - daysOld);
-
       let deletedCount = 0;
+      this._withSheetWriteLock(() => {
+        const data = this._sheet.getDataRange().getValues();
+        const cutoffDate = new Date();
+        cutoffDate.setDate(cutoffDate.getDate() - daysOld);
 
-      // Vai all'indietro per evitare problemi di shifting indici
-      for (let i = data.length - 1; i >= 1; i--) {
-        const lastUpdated = new Date(data[i][5]);
-        if (!data[i][5] || isNaN(lastUpdated.getTime()) || lastUpdated < cutoffDate) {
-          this._sheet.deleteRow(i + 1);
-          deletedCount++;
+        // Lettura degli indici e cancellazioni restano nello stesso lock usato
+        // dagli update, quindi nessuna scrittura può colpire una riga spostata.
+        for (let i = data.length - 1; i >= 1; i--) {
+          const lastUpdated = new Date(data[i][5]);
+          if (!data[i][5] || isNaN(lastUpdated.getTime()) || lastUpdated < cutoffDate) {
+            this._sheet.deleteRow(i + 1);
+            deletedCount++;
+          }
         }
-      }
+      });
 
       console.log(`🧹 Pulite ${deletedCount} voci memoria vecchie`);
       return deletedCount;

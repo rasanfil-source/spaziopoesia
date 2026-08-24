@@ -223,7 +223,7 @@ class GeminiService {
     const candidate = result.candidates[0];
 
     // Controllo blocco safety
-    if (candidate.finishReason && ['SAFETY', 'RECITATION', 'OTHER', 'BLOCKLIST'].includes(candidate.finishReason)) {
+    if (candidate.finishReason && candidate.finishReason !== 'STOP') {
       throw new Error(`Risposta bloccata da Gemini: ${candidate.finishReason}`);
     }
 
@@ -396,7 +396,18 @@ class GeminiService {
       }
 
       const result = JSON.parse(body);
-      const generatedText = result.candidates[0].content.parts[0].text;
+      const candidate = result && result.candidates && result.candidates[0];
+      if (!candidate) {
+        throw new Error('Generazione con cache senza candidati');
+      }
+      if (candidate.finishReason && candidate.finishReason !== 'STOP') {
+        throw new Error(`Generazione con cache terminata in modo incompleto: ${candidate.finishReason}`);
+      }
+      const generatedText = ((candidate.content && candidate.content.parts) || [])
+        .map(part => part.text || '').join('').trim();
+      if (!generatedText) {
+        throw new Error('Generazione con cache ha restituito testo vuoto');
+      }
       return generatedText;
     } catch (e) {
       throw e;
@@ -488,30 +499,12 @@ Output JSON:
       });
 
 
-      // Punto 4: Estesa gestione errori con switch alla chiave di riserva
       responseCode = response.getResponseCode();
-      if ([401, 403, 429, 500, 502, 503, 504].includes(responseCode) && this.backupKey) {
-        console.warn(`\u26A0\uFE0F Chiave primaria esaurita / errore(${response.getResponseCode()}).Tentativo con chiave di riserva...`);
-        activeKey = this.backupKey;
-        response = this.fetchFn(`${url}?key=${encodeURIComponent(activeKey)}`, {
-          method: 'POST',
-          contentType: 'application/json',
-          payload: JSON.stringify({
-            contents: [{ role: 'user', parts: [{ text: prompt }] }],
-            generationConfig: {
-              maxOutputTokens: 1024,
-              responseMimeType: 'application/json'
-            }
-          }),
-          muteHttpExceptions: true
-        });
-      }
-
     } catch (e) {
       fetchError = e;
     }
 
-    const shouldTryBackupKey = !!this.backupKey
+    const shouldTryBackupKey = activeKey === this.primaryKey && !!this.backupKey
       && (
         fetchError !== null
         || (response && [401, 403, 429, 500, 502, 503, 504].includes(response.getResponseCode()))
@@ -583,7 +576,7 @@ Output JSON:
 
     const candidate = result.candidates[0];
 
-    if (candidate.finishReason && ['SAFETY', 'RECITATION', 'OTHER', 'BLOCKLIST'].includes(candidate.finishReason)) {
+    if (candidate.finishReason && candidate.finishReason !== 'STOP') {
       console.warn(`\u26A0\uFE0F Controllo rapido bloccato: ${candidate.finishReason}`);
       return defaultResult;
     }
@@ -611,6 +604,11 @@ Output JSON:
       return defaultResult;
     }
 
+    if (!this._isValidQuickCheckPayload_(data)) {
+      console.warn('⚠️ Schema quick-check incompleto o non valido: decisione lasciata indeterminata');
+      return defaultResult;
+    }
+
     // Detection locale come lingua alternativa
 
     // Normalizzazione sicura booleano
@@ -630,6 +628,18 @@ Output JSON:
         dimensions: data.dimensions || null
       }
     };
+  }
+
+  _isValidQuickCheckPayload_(data) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
+    if (typeof data.reply_needed !== 'boolean') return false;
+    if (!/^[a-z]{2}$/i.test(String(data.language || ''))) return false;
+    if (!['TECHNICAL', 'PASTORAL', 'POETRY', 'FORMAL', 'MIXED'].includes(String(data.category || '').toUpperCase())) return false;
+    if (!data.dimensions || typeof data.dimensions !== 'object') return false;
+    return ['technical', 'pastoral', 'poetry', 'formal'].every(key => {
+      const value = data.dimensions[key];
+      return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
+    });
   }
 
 
@@ -864,8 +874,8 @@ Output JSON:
 
     // Default: IT se punteggi nulli o trascurabili
     if (maxScore < 2) {
-      console.log('   \u2713 Default: ITALIANO (punteggio basso o nullo)');
-      return { lang: 'it', confidence: maxScore, safetyGrade: 5 };
+      console.log('   ✓ Default provvisorio: ITALIANO (evidenza locale insufficiente)');
+      return { lang: 'it', confidence: maxScore, safetyGrade: 1 };
     }
 
     const safetyGrade = this._computeSafetyGrade(detectedLang, maxScore, scores);
@@ -1292,20 +1302,11 @@ Output JSON:
           return result.result;
         }
       } catch (error) {
-        if (error.message && error.message.includes('QUOTA_EXHAUSTED')) {
-          console.warn('⚠️ Rate Limiter in QUOTA_EXHAUSTED nel quick check, provo fallback diretto con retry');
-          try {
-            return this._withRetry(
-              () => this._quickCheckWithModel(emailContent, emailSubject, this.modelName, detection),
-              'Quick check fallback dopo QUOTA_EXHAUSTED'
-            );
-          } catch (directError) {
-            console.error(`❌ Fallback diretto quick check fallito: ${directError.message}. Uso detection locale.`);
-            return defaultResult;
-          }
-        }
-        console.warn(`⚠️ Rate Limiter quick check fallito: ${error.message} `);
-        // Prosegui con implementazione originale
+        // _quickCheckWithModel ha già tentato una sola volta la backup key per
+        // ciascun retry del limiter. Ripetere qui l'intero ciclo moltiplicherebbe
+        // le chiamate senza aggiungere una strategia nuova.
+        console.warn(`⚠️ Rate Limiter quick check fallito: ${error.message}. Decisione indeterminata.`);
+        return defaultResult;
       }
     }
 
@@ -1365,11 +1366,30 @@ Output JSON:
           if (cachedName) {
             console.log(`🚀 Generazione con Context Caching: ${cachedName}`);
             try {
-              const text = this._generateWithCachedContent_(cachedName, query);
-              return { success: true, text: text, modelUsed: targetModel, cached: true };
+              const cachedModelKey = this.rateLimiter && this.rateLimiter.models
+                ? Object.keys(this.rateLimiter.models).find(key => this.rateLimiter.models[key].name === targetModel)
+                : null;
+              if (!cachedModelKey) {
+                throw new Error(`Modello cache non tracciabile nel RateLimiter: ${targetModel}`);
+              }
+              const estimatedTokens = this._estimateTokens(prompt, []);
+              const cachedResult = this.rateLimiter.executeRequest(
+                'generation',
+                () => this._generateWithCachedContent_(cachedName, query),
+                {
+                  estimatedTokens: estimatedTokens,
+                  preferQuality: true,
+                  forceModel: cachedModelKey
+                }
+              );
+              if (cachedResult.success) {
+                return { success: true, text: cachedResult.result, modelUsed: targetModel, cached: true };
+              }
             } catch (e) {
               if (e.message === 'CACHE_MISS_404') {
                 console.warn('⚠️ Cache Miss 404 in generazione. Fallback a generazione standard.');
+              } else if (e.message && e.message.includes('QUOTA_EXHAUSTED')) {
+                throw e;
               } else {
                 throw e;
               }

@@ -63,6 +63,7 @@ const CONFIG = {
     enabled: true,                   // Includi allegati multimodali (Vision) nel prompt
     maxFiles: 4,                     // Numero massimo di allegati da processare
     maxBytesPerFile: 5 * 1024 * 1024,// 5 MB per file
+    maxInlinePayloadBytes: 18 * 1024 * 1024, // Budget cumulativo già Base64 (<20 MB request inline)
     ocrTriggerKeywords: [            // Metadati descrittivi; non bloccano gli allegati reali
       'poesia', 'componimento', 'testo', 'immagine', 'allegato', 'foto', 'foto poesia'
     ]
@@ -112,7 +113,7 @@ const CONFIG = {
     LEVEL: 'INFO',                     // DEBUG, INFO, WARN, ERROR
     STRUCTURED: true,                  // Log in formato JSON
     SEND_ERROR_NOTIFICATIONS: true,    // Invia email per errori critici
-    ADMIN_EMAIL: PropertiesService.getScriptProperties().getProperty('ADMIN_EMAIL') || 'rasanfil@gmail.com'
+    ADMIN_EMAIL: PropertiesService.getScriptProperties().getProperty('ADMIN_EMAIL') || ''
   },
 
   // === Metriche Giornaliere ===

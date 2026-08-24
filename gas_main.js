@@ -28,7 +28,8 @@ const RESOURCE_CACHE_PARTS_KEY = `${RESOURCE_CACHE_KEY_V2}:parts`;
 const RESOURCE_CACHE_PART_PREFIX = `${RESOURCE_CACHE_KEY_V2}:part:`;
 const RESOURCE_CACHE_MAX_PART_SIZE = 95000;
 
-// Sospensione e festività rimosse.
+// La KB usa cache lunga; kill switch, blacklist, assenze e fasce orarie sono
+// ricaricati a ogni esecuzione tramite _refreshOperationalConfig_.
 
 // ====================================================================
 // CARICAMENTO RISORSE
@@ -73,7 +74,8 @@ function loadResources(acquireLock = true, hasExternalLock = false) {
     GLOBAL_CACHE.lastLoadedAt &&
     typeof GLOBAL_CACHE.knowledgeBase === 'string' &&
     GLOBAL_CACHE.knowledgeBase.trim() &&
-    ((now - GLOBAL_CACHE.lastLoadedAt) < RESOURCE_CACHE_TTL_MS);
+    ((now - GLOBAL_CACHE.lastLoadedAt) < RESOURCE_CACHE_TTL_MS) &&
+    !(typeof CONFIG !== 'undefined' && CONFIG.FORCE_RELOAD === true);
   if (cacheIsFresh) return;
 
   const lock = LockService.getScriptLock();
@@ -105,7 +107,7 @@ function _loadResourcesInternal() {
   // mai qui, altrimenti si degrada sistematicamente il caso normale.
 
   // 1. Prova a leggere dalla vera Cache di Apps Script
-  if (cache) {
+  if (cache && !(typeof CONFIG !== 'undefined' && CONFIG.FORCE_RELOAD === true)) {
     const cachedData = _readResourceCachePayload(cache);
     if (cachedData) {
       try {
@@ -179,6 +181,8 @@ function _loadResourcesInternal() {
   // Config Avanzata
   const adv = withSheetsRetry(() => _loadAdvancedConfig(ss), 'Lettura Configurazione Avanzata');
   newCacheData.systemEnabled = adv.systemEnabled;
+  newCacheData.vacationPeriods = adv.vacationPeriods;
+  newCacheData.suspensionRules = adv.suspensionRules;
   newCacheData.ignoreDomains = adv.ignoreDomains;
   newCacheData.ignoreKeywords = adv.ignoreKeywords;
   newCacheData.loaded = true;
@@ -405,12 +409,32 @@ function _parseSheetToStructured(data) {
 function _loadAdvancedConfig(ss) {
   const config = { systemEnabled: true, vacationPeriods: [], suspensionRules: {}, ignoreDomains: [], ignoreKeywords: [] };
   const sheet = ss.getSheetByName('Controllo');
-  if (!sheet) return config;
-
-  withSheetsRetry(() => {
+  if (sheet) withSheetsRetry(() => {
     // Interruttore
     const status = sheet.getRange('B2').getValue();
     if (String(status).toUpperCase().includes('SPENTO')) config.systemEnabled = false;
+
+    // Assenze: durante ferie/permesso/malattia il bot resta attivo H24.
+    const absenceRows = sheet.getRange('A5:D7').getValues();
+    absenceRows.forEach(row => {
+      const start = _coerceSheetDate_(row[1]);
+      const end = _coerceSheetDate_(row[3]);
+      if (start && end) {
+        end.setHours(23, 59, 59, 999);
+        config.vacationPeriods.push({ reason: String(row[0] || '').trim(), start: start.getTime(), end: end.getTime() });
+      }
+    });
+
+    // Fasce di presenza segreteria: in queste ore l'autorisposta è sospesa.
+    const scheduleRows = sheet.getRange('A10:D16').getValues();
+    scheduleRows.forEach(row => {
+      const day = String(row[0] || '').trim().toLowerCase();
+      const startMinutes = _coerceSheetTimeMinutes_(row[1]);
+      const endMinutes = _coerceSheetTimeMinutes_(row[3]);
+      if (day && startMinutes !== null && endMinutes !== null && endMinutes > startMinutes) {
+        config.suspensionRules[day] = { startMinutes: startMinutes, endMinutes: endMinutes };
+      }
+    });
 
     // Filtri anti-spam (layout single-sheet: E11:F)
     const lastDataRow = sheet.getLastRow();
@@ -434,6 +458,54 @@ function _loadAdvancedConfig(ss) {
   config.ignoreKeywords = Array.from(new Set([...staticKeywords, ...config.ignoreKeywords].map(v => String(v).trim().toLowerCase()).filter(Boolean)));
 
   return config;
+}
+
+function _coerceSheetDate_(value) {
+  if (value instanceof Date && !isNaN(value.getTime())) return new Date(value.getTime());
+  if (typeof value === 'string' && value.trim()) {
+    const match = value.trim().match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})$/);
+    if (match) {
+      const parsed = new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
+      return isNaN(parsed.getTime()) ? null : parsed;
+    }
+  }
+  return null;
+}
+
+function _coerceSheetTimeMinutes_(value) {
+  if (value instanceof Date && !isNaN(value.getTime())) return value.getHours() * 60 + value.getMinutes();
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.round((value % 1) * 24 * 60);
+  const match = String(value || '').trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  return hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59 ? hours * 60 + minutes : null;
+}
+
+function _refreshOperationalConfig_() {
+  const spreadsheetId = (typeof CONFIG !== 'undefined' && CONFIG.SPREADSHEET_ID) ? CONFIG.SPREADSHEET_ID : null;
+  if (!spreadsheetId) throw new Error('SPREADSHEET_ID non configurato per refresh operativo');
+  const ss = SpreadsheetApp.openById(spreadsheetId);
+  const adv = _loadAdvancedConfig(ss);
+  GLOBAL_CACHE.systemEnabled = adv.systemEnabled;
+  GLOBAL_CACHE.vacationPeriods = adv.vacationPeriods;
+  GLOBAL_CACHE.suspensionRules = adv.suspensionRules;
+  GLOBAL_CACHE.ignoreDomains = adv.ignoreDomains;
+  GLOBAL_CACHE.ignoreKeywords = adv.ignoreKeywords;
+  return adv;
+}
+
+function _isAutoresponderSuspended_(config, now) {
+  const current = now instanceof Date ? now : new Date();
+  const timestamp = current.getTime();
+  const vacations = Array.isArray(config && config.vacationPeriods) ? config.vacationPeriods : [];
+  if (vacations.some(period => timestamp >= Number(period.start) && timestamp <= Number(period.end))) return false;
+
+  const dayNames = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
+  const rule = config && config.suspensionRules ? config.suspensionRules[dayNames[current.getDay()]] : null;
+  if (!rule) return false;
+  const minutes = current.getHours() * 60 + current.getMinutes();
+  return minutes >= Number(rule.startMinutes) && minutes < Number(rule.endMinutes);
 }
 
 // ====================================================================
@@ -463,7 +535,14 @@ function setupAllTriggers() {
  * Configura il trigger di elaborazione email.
  */
 function setupMainTrigger(minutes) {
-  const intervalMinutes = parseInt(minutes, 10) || 5;
+  const rawMinutes = (minutes === undefined || minutes === null || minutes === '') ? 5 : Number(minutes);
+  const allowedIntervals = [1, 5, 10, 15, 30];
+  if (!Number.isInteger(rawMinutes) || !allowedIntervals.includes(rawMinutes)) {
+    throw new Error(`Intervallo trigger non valido: ${minutes}. Valori consentiti: ${allowedIntervals.join(', ')} minuti.`);
+  }
+  const intervalMinutes = rawMinutes;
+  // La validazione precede volutamente la cancellazione: un input errato non
+  // deve lasciare il sistema privo del trigger già funzionante.
   deleteTriggersByHandler_('main');
   deleteTriggersByHandler_('processEmailsMain');
 
@@ -600,8 +679,13 @@ function main() {
     return;
   }
 
-  const executionLock = LockService.getScriptLock();
+  // UserLock serializza le esecuzioni del bot senza entrare in conflitto con
+  // gli ScriptLock brevi usati internamente da quote, memoria e label.
+  const executionLock = (typeof LockService.getUserLock === 'function')
+    ? LockService.getUserLock()
+    : LockService.getScriptLock();
   let hasExecutionLock = false;
+  let processor = null;
 
   try {
     // 1. Sincronizzazione Esecuzione (Prevenzione concurrency)
@@ -615,6 +699,9 @@ function main() {
 
     // 2. Caricamento Risorse (Config, KB, Blacklist)
     withSheetsRetry(() => loadResources(false, true), 'loadResources(main)');
+    // Kill switch, blacklist e calendario sono dati operativi: vanno riletti a
+    // ogni run e non devono ereditare il TTL di sei ore della Knowledge Base.
+    withSheetsRetry(() => _refreshOperationalConfig_(), 'refresh configurazione operativa');
 
     if (!GLOBAL_CACHE.loaded) {
       console.error('💥 Risorse non caricate correttamente (GLOBAL_CACHE.loaded=false). Interruzione preventiva.');
@@ -627,8 +714,13 @@ function main() {
       return;
     }
 
+    if (_isAutoresponderSuspended_(GLOBAL_CACHE, new Date())) {
+      console.log('🟡 Autoresponder sospeso: segreteria presente nella fascia configurata.');
+      return;
+    }
+
     // 4. Orchestrazione Pipeline (Delegato alle classi di servizio)
-    const processor = new EmailProcessor();
+    processor = new EmailProcessor();
     const knowledgeBase = GLOBAL_CACHE.knowledgeBase || '';
 
     const results = processor.processUnreadEmails(knowledgeBase, true); // true = skip double lock
@@ -651,7 +743,7 @@ function main() {
     }
   } finally {
     // ⚠️ OTTIMIZZAZIONE: Flush finale del Rate Limiter (se non già fatto da processor)
-    if (typeof processor !== 'undefined' && processor && typeof processor.flush === 'function') {
+    if (processor && typeof processor.flush === 'function') {
       try { processor.flush(); } catch (e) { }
     }
 
