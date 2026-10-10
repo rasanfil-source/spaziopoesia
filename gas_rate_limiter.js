@@ -26,26 +26,61 @@ class GeminiRateLimiter {
       console.log('   \u2713 Modelli caricati da CONFIG.GEMINI_MODELS');
     } else {      // Fallback se CONFIG non disponibile
       console.warn('   \u26A0\uFE0F CONFIG.GEMINI_MODELS non trovato, uso default');
+      // Chiavi storiche condivise con CONFIG e con i contatori persistiti delle quote.
       this.models = {
         'flash-3.7': {
-          name: 'gemini-3.7-flash',
+          name: 'gemini-3.8-flash',
           rpm: 10, tpm: 250000, rpd: 1500,
-          useCases: ['generation', 'all']
+          contextWindowTokens: 1048576, ipm: null,
+          useCases: ['generation', 'fallback']
         },
         'flash-3.7-backup': {
-          name: 'gemini-3.7-flash',
+          name: 'gemini-3.8-flash',
           rpm: 10, tpm: 250000, rpd: 1500,
-          useCases: ['generation', 'backup']
+          contextWindowTokens: 1048576, ipm: null,
+          useCases: ['generation', 'fallback', 'backup']
+        },
+        'flash-3.6': {
+          name: 'gemini-3.6-flash',
+          rpm: 10, tpm: 250000, rpd: 1500,
+          contextWindowTokens: 1048576, ipm: null,
+          useCases: ['generation', 'fallback']
+        },
+        'flash-latest': {
+          name: 'gemini-flash-latest',
+          rpm: 10, tpm: 250000, rpd: 1500,
+          contextWindowTokens: 1048576, ipm: null,
+          useCases: ['generation', 'fallback']
+        },
+        'flash-latest-backup': {
+          name: 'gemini-flash-latest',
+          rpm: 10, tpm: 250000, rpd: 1500,
+          contextWindowTokens: 1048576, ipm: null,
+          useCases: ['generation', 'fallback', 'backup']
         },
         'flash-lite': {
-          name: 'gemini-3.1-flash-lite',
+          name: 'gemini-3.5-flash-lite',
           rpm: 15, tpm: 250000, rpd: 1000,
-          useCases: ['fallback', 'classification', 'quick_check']
+          contextWindowTokens: 1048576, ipm: null,
+          useCases: ['quick_check', 'classification', 'language', 'semantic', 'newsletter_summary', 'fallback']
         },
         'flash-lite-backup': {
-          name: 'gemini-3.1-flash-lite',
+          name: 'gemini-3.5-flash-lite',
           rpm: 15, tpm: 250000, rpd: 1000,
-          useCases: ['fallback', 'classification', 'quick_check', 'backup']
+          contextWindowTokens: 1048576, ipm: null,
+          useCases: ['quick_check', 'classification', 'language', 'semantic', 'newsletter_summary', 'fallback', 'backup']
+        },
+        'flash-lite-latest': {
+          name: 'gemini-flash-lite-latest',
+          rpm: 15, tpm: 250000, rpd: 1000,
+          contextWindowTokens: 1048576, ipm: null,
+          useCases: ['quick_check', 'classification', 'language', 'semantic', 'newsletter_summary', 'fallback']
+        },
+        'flash-lite-latest-backup': {
+          name: 'gemini-flash-lite-latest',
+          rpm: 15, tpm: 250000, rpd: 1000,
+          contextWindowTokens: 1048576, ipm: null,
+          useCases: ['quick_check', 'classification', 'language', 'semantic', 'newsletter_summary', 'fallback', 'backup']
         }
       };
     }
@@ -57,11 +92,11 @@ class GeminiRateLimiter {
     } else {
       // Fallback default
       this.strategies = {
-        'quick_check': ['flash-lite'],
-        'classification': ['flash-lite'],
-        'generation': ['flash-3.7', 'flash-3.7-backup', 'flash-lite', 'flash-lite-backup'],
-        'semantic': ['flash-lite', 'flash-lite-backup'],
-        'fallback': ['flash-lite', 'flash-lite-backup']
+        generation: ['flash-3.7', 'flash-3.7-backup', 'flash-3.6', 'flash-latest', 'flash-latest-backup', 'flash-lite', 'flash-lite-backup'],
+        quick_check: ['flash-lite', 'flash-lite-backup', 'flash-lite-latest', 'flash-lite-latest-backup', 'flash-3.7', 'flash-3.7-backup', 'flash-latest'],
+        classification: ['flash-lite', 'flash-lite-backup', 'flash-lite-latest', 'flash-lite-latest-backup', 'flash-3.7', 'flash-3.7-backup', 'flash-latest'],
+        semantic: ['flash-lite', 'flash-lite-backup', 'flash-lite-latest', 'flash-lite-latest-backup', 'flash-3.7', 'flash-3.7-backup', 'flash-latest'],
+        fallback: ['flash-lite', 'flash-lite-backup', 'flash-lite-latest', 'flash-lite-latest-backup', 'flash-3.7', 'flash-3.7-backup', 'flash-latest']
       };
     }
 
@@ -148,13 +183,13 @@ class GeminiRateLimiter {
   _normalizeDeprecatedModelNames(models) {
     const deprecatedMap = {
       // Mappatura modelli ritirati verso i modelli 3.x configurati.
-      'gemini-3.6-flash': 'gemini-3.7-flash',
-      'gemini-3.5-flash': 'gemini-3.7-flash',
-      'gemini-2.5-flash': 'gemini-3.7-flash',
-      'gemini-2.5-flash-lite': 'gemini-3.1-flash-lite',
-      'gemini-2.5-flash-exp': 'gemini-3.1-flash-lite',
-      'gemini-2.0-flash-exp': 'gemini-3.1-flash-lite',
-      'gemini-2.0-flash': 'gemini-3.1-flash-lite'
+      'gemini-3.7-flash': 'gemini-3.8-flash',
+      'gemini-3.5-flash': 'gemini-3.8-flash',
+      'gemini-2.5-flash': 'gemini-3.8-flash',
+      'gemini-2.5-flash-lite': 'gemini-3.5-flash-lite',
+      'gemini-2.5-flash-exp': 'gemini-3.5-flash-lite',
+      'gemini-2.0-flash-exp': 'gemini-3.5-flash-lite',
+      'gemini-2.0-flash': 'gemini-3.5-flash-lite'
     };
 
     const normalized = {};
@@ -468,7 +503,7 @@ class GeminiRateLimiter {
       try {
         const startTime = Date.now();
         // Esecuzione diretta senza controlli quota, usando la nuova baseline
-        const result = requestFn(options.modelNameOverride || 'gemini-3.7-flash');
+        const result = requestFn(options.modelNameOverride || 'gemini-3.8-flash');
         const duration = Date.now() - startTime;
 
         return {

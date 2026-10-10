@@ -788,15 +788,7 @@ class EmailProcessor {
 
 
       // Definizione strategie di generazione (Punti di robustezza cross-key)
-      const geminiModels = (typeof CONFIG !== 'undefined' && CONFIG.GEMINI_MODELS) ? CONFIG.GEMINI_MODELS : {};
-      const flashModel = (geminiModels['flash-3.7'] && geminiModels['flash-3.7'].name) ? geminiModels['flash-3.7'].name : 'gemini-3.7-flash';
-      const liteModel = (geminiModels['flash-lite'] && geminiModels['flash-lite'].name) ? geminiModels['flash-lite'].name : 'gemini-3.1-flash-lite';
-
-      const attemptStrategy = [
-        { name: 'Primary-Flash3.7', key: this.geminiService.primaryKey, model: flashModel, skipRateLimit: false },
-        { name: 'Backup-Flash3.7', key: this.geminiService.backupKey, model: flashModel, skipRateLimit: true },
-        { name: 'Fallback-Lite', key: this.geminiService.backupKey || this.geminiService.primaryKey, model: liteModel, skipRateLimit: true }
-      ];
+      const attemptStrategy = this.geminiService.buildGenerationStrategies();
 
       // Esecuzione Loop Strategico
       for (const plan of attemptStrategy) {
@@ -809,6 +801,7 @@ class EmailProcessor {
           response = this.geminiService.generateResponse(fullPrompt, {
             apiKey: plan.key,
             modelName: plan.model,
+            modelKey: plan.modelKey,
             skipRateLimit: plan.skipRateLimit,
             attachments: attachmentBlobs
           });

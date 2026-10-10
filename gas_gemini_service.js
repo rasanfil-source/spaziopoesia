@@ -39,7 +39,7 @@ class GeminiService {
     // Alias accessibile per i moduli che usano la proprietà apiKey
     this.apiKey = this.primaryKey;
 
-    this.modelName = this.config.MODEL_NAME || 'gemini-3.7-flash';
+    this.modelName = this.config.MODEL_NAME || 'gemini-3.8-flash';
     this.baseUrl = this._buildGenerateUrl(this.modelName);
 
     if (!this.primaryKey || this.primaryKey.length < 20 || /YOUR_[A-Z0-9_]+_HERE/.test(this.primaryKey)) {
@@ -127,7 +127,7 @@ class GeminiService {
   /**
    * Genera risposta con modello specifico
    * @param {string} prompt - Prompt completo
-   * @param {string} modelName - Nome modello API (es. 'gemini-3.7-flash')
+   * @param {string} modelName - Nome modello API (es. 'gemini-3.8-flash')
    * @param {string} apiKeyOverride - Chiave API opzionale (per strategia multi-key)
    * @param {Array<Blob>} attachments - Array di Blob (immagini/PDF) da inviare
    * @returns {string|null} Testo generato
@@ -1327,6 +1327,19 @@ Output JSON:
   // GENERAZIONE RISPOSTA PRINCIPALE
   // ========================================================================
 
+  /** Costruisce i tentativi modello/chiave nell ordine configurato, come in AG. */
+  buildGenerationStrategies() {
+    const models = this.config.GEMINI_MODELS || {};
+    const chain = (this.config.MODEL_STRATEGY || {}).generation || [];
+    return chain.map(modelKey => {
+      const model = models[modelKey];
+      const usesBackupKey = modelKey.endsWith('-backup');
+      const key = usesBackupKey ? this.backupKey : this.primaryKey;
+      if (!model || !model.name || !key) return null;
+      return { name: modelKey, modelKey, model: model.name, key, skipRateLimit: usesBackupKey };
+    }).filter(Boolean);
+  }
+
   /**
    * Genera risposta AI con retry
    * Supporta Rate Limiter + fallback originale
@@ -1413,7 +1426,8 @@ Output JSON:
           (modelName) => this._generateWithModel(prompt, modelName, targetKey, attachments),
           {
             estimatedTokens: estimatedTokens,
-            preferQuality: true  // Qualità > economia per generation
+            preferQuality: true,  // Qualità > economia per generation
+            forceModel: options.modelKey || null
           }
         );
 
@@ -1422,6 +1436,8 @@ Output JSON:
           return { success: true, text: result.result, modelUsed: result.modelUsed };
         }
       } catch (error) {
+        // Il processor gestisce il prossimo modello/chiave nell'ordine configurato.
+        if (options.modelKey) throw error;
         if (error.message && error.message.includes('QUOTA_EXHAUSTED')) {
           console.warn('⚠️ Quota primaria esaurita (intercettato da RateLimiter)');
           throw error; // Rilancia per gestione strategia nel Processor

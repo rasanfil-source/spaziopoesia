@@ -321,9 +321,9 @@ function runAllTests() {
         });
     });
 
-    // 9. Config Validation (Gemini 3.7 Flash)
-    testGroup('Punto #9: Config Validation - Gemini 3.7 Flash & Model Strategy', results, () => {
-        test('validateConfig() valida con successo la configurazione Gemini 3.7', results, () => {
+    // 9. Config Validation (Gemini 3.8 Flash)
+    testGroup('Punto #9: Config Validation - Gemini 3.8 Flash & Model Strategy', results, () => {
+        test('validateConfig() valida con successo la configurazione Gemini 3.8', results, () => {
             const val = validateConfig();
             if (!val.valid) {
                 console.error('Errori validateConfig:', val.errors);
@@ -331,8 +331,8 @@ function runAllTests() {
             return val.valid === true && val.errors.length === 0;
         });
 
-        test('CONFIG.MODEL_NAME è impostato su gemini-3.7-flash', results, () => {
-            return CONFIG.MODEL_NAME === 'gemini-3.7-flash';
+        test('CONFIG.MODEL_NAME è impostato su gemini-3.8-flash', results, () => {
+            return CONFIG.MODEL_NAME === 'gemini-3.8-flash';
         });
 
         test('CONFIG.MODEL_STRATEGY.generation inizia con flash-3.7', results, () => {
@@ -341,16 +341,63 @@ function runAllTests() {
 
         test('CONFIG.GEMINI_MODELS contiene flash-3.7 con limiti corretti', results, () => {
             const m = CONFIG.GEMINI_MODELS['flash-3.7'];
-            return m && m.name === 'gemini-3.7-flash' && m.rpm === 10 && m.tpm === 250000 && m.rpd === 1500;
+            return m && m.name === 'gemini-3.8-flash' && m.rpm === 10 && m.tpm === 250000 && m.rpd === 1500;
         });
     });
 
     // 10. Regressioni sui bug critici della pipeline
     testGroup('Punto #10: Regressioni critiche - Cache, invio, prompt e quote', results, () => {
-        test('Gemini 3.7 non riceve il parametro temperature', results, () => {
+        test('Cascata AG: 3.8, backup, 3.6, latest, backup, Lite, backup', results, () => {
+            const service = new GeminiService();
+            service.backupKey = 'backup-key-abcdefghijklmnopqrstuvwxyz';
+            const plans = service.buildGenerationStrategies();
+            return plans.map(plan => plan.model).join(',') === [
+                'gemini-3.8-flash', 'gemini-3.8-flash', 'gemini-3.6-flash',
+                'gemini-flash-latest', 'gemini-flash-latest',
+                'gemini-3.5-flash-lite', 'gemini-3.5-flash-lite'
+            ].join(',') && plans.every(plan =>
+                plan.key === (plan.skipRateLimit ? service.backupKey : service.primaryKey)
+            );
+        });
+
+        test('Cascata senza backup mantiene tutti i modelli sulla primaria', results, () => {
+            const service = new GeminiService();
+            service.backupKey = null;
+            return service.buildGenerationStrategies().map(plan => plan.modelKey).join(',') ===
+                'flash-3.7,flash-3.6,flash-latest,flash-lite';
+        });
+
+        test('Il rate limiter conserva Gemini 3.6 come fallback distinto', results, () => {
+            const limiter = new GeminiRateLimiter();
+            return limiter.models['flash-3.6'].name === 'gemini-3.6-flash';
+        });
+
+        test('Generazione vincolata al modello propaga la quota senza saltare la cascata', results, () => {
+            const service = new GeminiService();
+            service.config.GEMINI_CONTEXT_CACHE = { enabled: false };
+            service.useRateLimiter = true;
+            let forcedModel;
+            let directCalls = 0;
+            service.rateLimiter = { executeRequest: (task, callback, options) => {
+                forcedModel = options.forceModel;
+                throw new Error('QUOTA_EXHAUSTED');
+            } };
+            service.fetchFn = () => { directCalls++; throw new Error('Chiamata inattesa'); };
+            try {
+                service.generateResponse('prompt', { modelName: 'gemini-3.6-flash', modelKey: 'flash-3.6' });
+                return false;
+            } catch (error) {
+                return error.message === 'QUOTA_EXHAUSTED' && forcedModel === 'flash-3.6' && directCalls === 0;
+            }
+        });
+
+        ['gemini-3.8-flash', 'gemini-3.5-flash-lite'].forEach(modelName => {
+        test(`${modelName} usa il nuovo endpoint senza parametri non supportati`, results, () => {
             const service = new GeminiService();
             let payload = null;
+            let requestUrl = '';
             service.fetchFn = (url, options) => {
+                requestUrl = url;
                 payload = JSON.parse(options.payload);
                 return {
                     getResponseCode: () => 200,
@@ -359,8 +406,21 @@ function runAllTests() {
                     })
                 };
             };
-            service._generateWithModel('prompt', 'gemini-3.7-flash');
-            return payload && !Object.prototype.hasOwnProperty.call(payload.generationConfig, 'temperature');
+            service._generateWithModel('prompt', modelName);
+            return requestUrl.includes(`/models/${modelName}:generateContent?`) && payload &&
+                ['temperature', 'topP', 'topK', 'candidateCount'].every(
+                    key => !Object.prototype.hasOwnProperty.call(payload.generationConfig, key)
+                );
+        });
+        });
+
+        test('Migrazione 3.7 conserva le chiavi delle quote senza modificare la configurazione originale', results, () => {
+            const legacy = { 'flash-3.7': { name: 'gemini-3.7-flash', rpm: 10 } };
+            const normalized = GeminiRateLimiter.prototype._normalizeDeprecatedModelNames(legacy);
+            return Object.keys(normalized).join(',') === 'flash-3.7' &&
+                normalized['flash-3.7'].name === 'gemini-3.8-flash' &&
+                normalized['flash-3.7'].rpm === 10 &&
+                legacy['flash-3.7'].name === 'gemini-3.7-flash';
         });
 
         test('Context Cache non viene riutilizzata per contenuti differenti', results, () => {

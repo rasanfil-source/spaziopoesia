@@ -124,7 +124,7 @@ class PromptEngine {
       ? CONFIG.MAX_SAFE_TOKENS : 50000;
 
     const OVERHEAD_TOKENS = (typeof CONFIG !== 'undefined' && CONFIG.PROMPT_ENGINE && CONFIG.PROMPT_ENGINE.OVERHEAD_TOKENS)
-      ? CONFIG.PROMPT_ENGINE.OVERHEAD_TOKENS : 18000; // Margine per reasoning e quote in Gemini 3.7 Flash
+      ? CONFIG.PROMPT_ENGINE.OVERHEAD_TOKENS : 18000; // Margine per reasoning e quote in Gemini 3.8 Flash
     const KB_BUDGET_RATIO = (typeof CONFIG !== 'undefined' && typeof CONFIG.KB_TOKEN_BUDGET_RATIO === 'number')
       ? CONFIG.KB_TOKEN_BUDGET_RATIO
       : 0.5; // La KB può occupare max il 50% dello spazio rimanente

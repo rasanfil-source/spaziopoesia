@@ -6,10 +6,10 @@
 const CONFIG = {
   // === API ===
   GEMINI_API_KEY: PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY'),
-  MODEL_NAME: 'gemini-3.7-flash',
+  MODEL_NAME: 'gemini-3.8-flash',
 
   // === Generazione ===
-  // Gemini 3.7 non accetta i parametri di sampling legacy (temperature/topP/topK).
+  // Gemini 3.8 non accetta i parametri di sampling legacy (temperature/topP/topK).
   MAX_OUTPUT_TOKENS: 6000,
 
   // === Validazione ===
@@ -102,7 +102,7 @@ const CONFIG = {
   USE_RATE_LIMITER: true,              // Rate limiter intelligente abilitato
 
   // === Limiti Token (Prompt Engine) ===
-  MAX_SAFE_TOKENS: 100000,             // Aumentato per Gemini 3.1 Flash-Lite
+  MAX_SAFE_TOKENS: 100000,             // Budget operativo per Gemini Flash-Lite
   KB_TOKEN_BUDGET_RATIO: 0.5,          // Percentuale budget KB rispetto a max token
 
   // === Limiti Thread ===
@@ -122,7 +122,7 @@ const CONFIG = {
   METRICS_SHEET_NAME: 'DailyMetrics',
 
   // === Modelli Gemini (configurazione centralizzata) ===
-  // Aggiornato: Gemini 3.7 Flash Free Tier
+  // Modello aggiornato a Gemini 3.8 Flash; limiti operativi preesistenti.
   GEMINI_FREE_TIER_NOTES: {
     contextWindowTokens: 1048576,
     rpm: 10,
@@ -142,47 +142,71 @@ const CONFIG = {
     propertyPrefix: 'gemini_context_cache_v3_'
   },
 
+  // Le chiavi flash-3.7 restano stabili per conservare contatori e finestre delle quote.
+  // Il modello API effettivo è definito da name, aggiornato a Gemini 3.8 Flash.
   GEMINI_MODELS: {
     'flash-3.7': {
-      name: 'gemini-3.7-flash',
-      rpm: 10,
-      tpm: 250000,
-      rpd: 1500,
-      contextWindowTokens: 1048576,
-      useCases: ['generation', 'all']
+      name: 'gemini-3.8-flash',
+      rpm: 10, tpm: 250000, rpd: 1500,
+      contextWindowTokens: 1048576, ipm: null,
+      useCases: ['generation', 'fallback']
     },
     'flash-3.7-backup': {
-      name: 'gemini-3.7-flash',
-      rpm: 10,
-      tpm: 250000,
-      rpd: 1500,
-      contextWindowTokens: 1048576,
-      useCases: ['generation', 'backup']
+      name: 'gemini-3.8-flash',
+      rpm: 10, tpm: 250000, rpd: 1500,
+      contextWindowTokens: 1048576, ipm: null,
+      useCases: ['generation', 'fallback', 'backup']
+    },
+    'flash-3.6': {
+      name: 'gemini-3.6-flash',
+      rpm: 10, tpm: 250000, rpd: 1500,
+      contextWindowTokens: 1048576, ipm: null,
+      useCases: ['generation', 'fallback']
+    },
+    'flash-latest': {
+      name: 'gemini-flash-latest',
+      rpm: 10, tpm: 250000, rpd: 1500,
+      contextWindowTokens: 1048576, ipm: null,
+      useCases: ['generation', 'fallback']
+    },
+    'flash-latest-backup': {
+      name: 'gemini-flash-latest',
+      rpm: 10, tpm: 250000, rpd: 1500,
+      contextWindowTokens: 1048576, ipm: null,
+      useCases: ['generation', 'fallback', 'backup']
     },
     'flash-lite': {
-      name: 'gemini-3.1-flash-lite',
-      rpm: 15,
-      tpm: 250000,
-      rpd: 1000,
-      contextWindowTokens: 1048576,
-      useCases: ['quick_check', 'classification', 'semantic', 'fallback']
+      name: 'gemini-3.5-flash-lite',
+      rpm: 15, tpm: 250000, rpd: 1000,
+      contextWindowTokens: 1048576, ipm: null,
+      useCases: ['quick_check', 'classification', 'language', 'semantic', 'newsletter_summary', 'fallback']
     },
     'flash-lite-backup': {
-      name: 'gemini-3.1-flash-lite',
-      rpm: 15,
-      tpm: 250000,
-      rpd: 1000,
-      contextWindowTokens: 1048576,
-      useCases: ['quick_check', 'classification', 'semantic', 'fallback', 'backup']
+      name: 'gemini-3.5-flash-lite',
+      rpm: 15, tpm: 250000, rpd: 1000,
+      contextWindowTokens: 1048576, ipm: null,
+      useCases: ['quick_check', 'classification', 'language', 'semantic', 'newsletter_summary', 'fallback', 'backup']
+    },
+    'flash-lite-latest': {
+      name: 'gemini-flash-lite-latest',
+      rpm: 15, tpm: 250000, rpd: 1000,
+      contextWindowTokens: 1048576, ipm: null,
+      useCases: ['quick_check', 'classification', 'language', 'semantic', 'newsletter_summary', 'fallback']
+    },
+    'flash-lite-latest-backup': {
+      name: 'gemini-flash-lite-latest',
+      rpm: 15, tpm: 250000, rpd: 1000,
+      contextWindowTokens: 1048576, ipm: null,
+      useCases: ['quick_check', 'classification', 'language', 'semantic', 'newsletter_summary', 'fallback', 'backup']
     }
   },
 
   MODEL_STRATEGY: {
-    'quick_check': ['flash-lite'],
-    'classification': ['flash-lite'],
-    'generation': ['flash-3.7', 'flash-3.7-backup', 'flash-lite', 'flash-lite-backup'],
-    'semantic': ['flash-lite', 'flash-lite-backup'],
-    'fallback': ['flash-lite', 'flash-lite-backup']
+    generation: ['flash-3.7', 'flash-3.7-backup', 'flash-3.6', 'flash-latest', 'flash-latest-backup', 'flash-lite', 'flash-lite-backup'],
+    quick_check: ['flash-lite', 'flash-lite-backup', 'flash-lite-latest', 'flash-lite-latest-backup', 'flash-3.7', 'flash-3.7-backup', 'flash-latest'],
+    classification: ['flash-lite', 'flash-lite-backup', 'flash-lite-latest', 'flash-lite-latest-backup', 'flash-3.7', 'flash-3.7-backup', 'flash-latest'],
+    semantic: ['flash-lite', 'flash-lite-backup', 'flash-lite-latest', 'flash-lite-latest-backup', 'flash-3.7', 'flash-3.7-backup', 'flash-latest'],
+    fallback: ['flash-lite', 'flash-lite-backup', 'flash-lite-latest', 'flash-lite-latest-backup', 'flash-3.7', 'flash-3.7-backup', 'flash-latest']
   },
 
   // === Liste di esclusione ===

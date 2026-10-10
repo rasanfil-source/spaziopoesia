@@ -44,6 +44,17 @@ The code is divided into specialized modules:
 
 ## ⚙️ Quick Setup
 
+The generation chain follows the GMAIL PARROCCHIA/AG project:
+`gemini-3.8-flash` (primary, backup) → `gemini-3.6-flash` (primary) →
+`gemini-flash-latest` (primary, backup) → `gemini-3.5-flash-lite` (primary, backup).
+Backup attempts are skipped when no backup key is configured.
+Quick checks, classification and semantic validation prioritize `gemini-3.5-flash-lite`,
+then `gemini-flash-lite-latest`, the primary Flash model and `gemini-flash-latest`, according to quota availability.
+Internal keys `flash-3.7` and `flash-3.7-backup` remain stable to preserve quota counters;
+the `name` field identifies the actual API model. Existing operational limits are retained and should be checked against the project's AI Studio quotas.
+Context caches are automatically recreated when the model changes.
+See the [official Gemini 3.8 Flash migration guide](https://ai.google.dev/gemini-api/docs/generate-content/latest-model).
+
 1.  **Script Properties**: Set `GEMINI_API_KEY`, `SPREADSHEET_ID`, and `METRICS_SHEET_ID`.
 2.  **Google Sheets**: Create a sheet with tabs `Istruzioni`, `Sostituzioni`, `Controllo`, `ConversationMemory`, and `DailyMetrics`.
 3.  **Triggers**: Run the `setupAllTriggers()` function from the `gas_main.js` file to activate the system.
